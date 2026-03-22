@@ -634,14 +634,17 @@ drained:
 		inlineCSS := sp.getStatusCSS()
 		elapsedSecs := sp.elapsedSeconds()
 		quizVisibleOnLoad := sp.quizEnabled && elapsedSecs >= 40
+		scoreboardStyle := ""
 		quizSectionStyle := ""
 		quizInfoText := "Der Container waermt sich gerade auf. Solange kannst du mit Gaming-Zitaten ein paar Punkte farmen."
 		countdownLabel := "Verbleibend bis zum Reload"
 		debugInfoText := ""
 		if !sp.quizEnabled {
+			scoreboardStyle = "display:none;"
 			quizSectionStyle = "display:none;"
 			quizInfoText = "Das Minigame ist aktuell deaktiviert. Der Container startet trotzdem ganz normal."
 		} else if !quizVisibleOnLoad {
+			scoreboardStyle = "display:none;"
 			quizSectionStyle = "display:none;"
 			quizInfoText = "Minigame wird nach 40 Sekunden Wartezeit automatisch freigeschaltet."
 		}
@@ -694,7 +697,7 @@ drained:
 	</style>
 </head>
 <body>
-	<div class="scoreboard">
+	<div class="scoreboard" id="scoreboard" style="%s">
 		<div class="score-line">
 			<span>Punkte:</span>
 			<span class="score-value" id="score-display">0/0</span>
@@ -875,6 +878,13 @@ drained:
 			}
 		}
 
+		function showScoreboard() {
+			const scoreboard = document.getElementById('scoreboard');
+			if (scoreboard) {
+				scoreboard.style.display = '';
+			}
+		}
+
 		// Countdown timer
 		let remaining = Math.max(0, Number(%d));
 		let reloading = false;
@@ -912,6 +922,7 @@ drained:
 		// Load quiz on page load only when enabled and 40+ seconds have elapsed
 		if (MINIGAME_ENABLED) {
 			if (ELAPSED_SECONDS >= QUIZ_START_THRESHOLD) {
+				showScoreboard();
 				showQuizSection();
 				// Already waited 40+ seconds, load quiz immediately
 				loadQuiz();
@@ -919,6 +930,7 @@ drained:
 				// Schedule quiz load after the threshold is reached
 				const msUntilThreshold = (QUIZ_START_THRESHOLD - ELAPSED_SECONDS) * 1000;
 				setTimeout(function() {
+					showScoreboard();
 					showQuizSection();
 					loadQuiz();
 				}, msUntilThreshold);
@@ -926,7 +938,7 @@ drained:
 		}
 	</script>
 </body>
-</html>`, inlineCSS, debugInfoText, quizInfoText, visitorInfo, sp.groupName, lastStartupSummary, remaining, countdownLabel, quizSectionStyle, sp.quizEnabled, sp.debugMode, elapsedSecs, sessionID, remaining)
+</html>`, inlineCSS, scoreboardStyle, debugInfoText, quizInfoText, visitorInfo, sp.groupName, lastStartupSummary, remaining, countdownLabel, quizSectionStyle, sp.quizEnabled, sp.debugMode, elapsedSecs, sessionID, remaining)
 	})
 
 	// Quiz API: Get next question
