@@ -222,7 +222,10 @@ func (lg LazyGroup) getActiveClients() int {
 
 func (lg LazyGroup) isGroupOn() bool {
 	for _, c := range lg.getContainers() {
-		if c.State == "running" {
+		// Treat transitional states as "on" so status-page listeners do not steal
+		// ports while the workload container is still starting.
+		switch c.State {
+		case "running", "created", "restarting", "paused":
 			return true
 		}
 	}
