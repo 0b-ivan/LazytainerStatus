@@ -105,6 +105,8 @@ type startupStatusPage struct {
 	lastCompletedAt     time.Time
 	wakeRequestedAt     time.Time
 	cssPath             string
+	quizEnabled         bool
+	debugMode           bool
 }
 
 func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate time.Duration) *startupStatusPage {
@@ -123,7 +125,37 @@ func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate t
 		lastStartupDuration: lastDuration,
 		lastCompletedAt:     lastCompletedAt,
 		cssPath:             cssPathFromEnv(),
+		quizEnabled:         quizEnabledFromEnv(),
+		debugMode:           debugModeFromEnv(),
 	}
+}
+
+func quizEnabledFromEnv() bool {
+	value := strings.TrimSpace(os.Getenv("STATUS_PAGE_MINIGAME_ENABLED"))
+	if value == "" {
+		return true
+	}
+
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return true
+	}
+
+	return enabled
+}
+
+func debugModeFromEnv() bool {
+	value := strings.TrimSpace(os.Getenv("STATUS_PAGE_DEBUG_MODE"))
+	if value == "" {
+		return false
+	}
+
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return false
+	}
+
+	return enabled
 }
 
 func estimatePathFromEnv() string {
@@ -598,6 +630,18 @@ drained:
 
 		lastStartupSummary := sp.lastStartupSummary()
 		visitorInfo := visitorInfoText(sp.groupName)
+		quizSectionStyle := ""
+		quizInfoText := "Der Container waermt sich gerade auf. Solange kannst du mit Gaming-Zitaten ein paar Punkte farmen."
+		countdownLabel := "Verbleibend bis zum Reload"
+		debugInfoText := ""
+		if !sp.quizEnabled {
+			quizSectionStyle = "display:none;"
+			quizInfoText = "Das Minigame ist aktuell deaktiviert. Der Container startet trotzdem ganz normal."
+		}
+		if sp.debugMode {
+			countdownLabel = "Debug-Modus aktiv: kein automatischer Reload"
+			debugInfoText = "Debug-Modus aktiv: Die Statusseite bleibt stehen, damit du sie in Ruhe untersuchen kannst."
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -649,7 +693,8 @@ drained:
 			<span class="score-value" id="score-display">0/0</span>
 		</div>
 		<p class="score-info">Scoreboard: Erste Zahl = richtige Treffer, zweite Zahl = gespielte Fragen.</p>
-		<p class="score-info">Der Container waermt sich gerade auf. Solange kannst du mit Gaming-Zitaten ein paar Punkte farmen.</p>
+		<p class="score-info">%s</p>
+		<p class="score-info">%s</p>
 		<p class="score-info">%s</p>
 	</div>
 
@@ -663,11 +708,11 @@ drained:
 				<p>Container der Gruppe <strong>%s</strong> faehrt gerade hoch und ist gleich am Start.</p>
 				<p class="last-startup">%s</p>
 				<div class="countdown" aria-live="polite"><span id="remaining">%d</span> s</div>
-				<p class="countdown-label">Verbleibend bis zum Reload</p>
+				<p class="countdown-label">%s</p>
 			</div>
 		</div>
 
-		<div class="section">
+		<div class="section" id="quiz-section" style="%s">
 			<div class="card">
 				<h2 style="margin: 0 0 16px 0; font-size: 1.1rem;">🎮 Spiele-Quiz</h2>
 				<div id="quiz-container" class="quiz-card"></div>
@@ -676,6 +721,8 @@ drained:
 	</div>
 
 	<script>
+		const MINIGAME_ENABLED = %t;
+		const DEBUG_MODE = %t;
 		const SESSION_ID = '%s';
 		let currentQuestion = null;
 		let score = 0;
@@ -684,7 +731,7 @@ drained:
 
 		async function loadQuiz() {
 			try {
-				const res = await fetch('api/quiz?session=' + encodeURIComponent(SESSION_ID), {
+				const res = await fetch('/api/quiz?session=' + encodeURIComponent(SESSION_ID), {
 					headers: { 'Accept': 'application/json' }
 				});
 				const data = await res.json();
@@ -747,7 +794,7 @@ drained:
 			}
 
 			try {
-				let res = await fetch('api/quiz/answer', {
+				let res = await fetch('/api/quiz/answer', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
@@ -830,28 +877,37 @@ drained:
 
 		render();
 		if (remaining === 0) {
-			reloadNow();
+			if (!DEBUG_MODE) {
+				reloadNow();
+			}
 		} else {
 			setInterval(function () {
 				if (remaining > 0) {
 					remaining -= 1;
 					render();
-					if (remaining === 0) {
+					if (remaining === 0 && !DEBUG_MODE) {
 						reloadNow();
 					}
 				}
 			}, 1000);
 		}
 
-		// Load quiz on page load
-		loadQuiz();
+		// Load quiz on page load only when enabled
+		if (MINIGAME_ENABLED) {
+			loadQuiz();
+		}
 	</script>
 </body>
-</html>`, visitorInfo, sp.groupName, lastStartupSummary, remaining, sessionID, remaining)
+</html>`, debugInfoText, quizInfoText, visitorInfo, sp.groupName, lastStartupSummary, remaining, countdownLabel, quizSectionStyle, sp.quizEnabled, sp.debugMode, sessionID, remaining)
 	})
 
 	// Quiz API: Get next question
 	quizGetHandler := func(w http.ResponseWriter, r *http.Request) {
+		if !sp.quizEnabled {
+			http.NotFound(w, r)
+			return
+		}
+
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -881,6 +937,11 @@ drained:
 
 	// Quiz API: Submit answer
 	quizAnswerHandler := func(w http.ResponseWriter, r *http.Request) {
+		if !sp.quizEnabled {
+			http.NotFound(w, r)
+			return
+		}
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return

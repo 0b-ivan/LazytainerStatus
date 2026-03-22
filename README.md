@@ -156,6 +156,39 @@ lazytainer:
     - STARTUP_ESTIMATE_FILE=/data/lazytainer_startup_estimates.json
 ```
 
+#### Status Page Minigame Toggle
+
+The status page quiz/minigame is enabled by default and can be toggled with `STATUS_PAGE_MINIGAME_ENABLED`:
+
+```yaml
+lazytainer:
+  # ... configuration omitted for brevity
+  environment:
+    - STATUS_PAGE_MINIGAME_ENABLED=true  # default
+```
+
+Disable the minigame:
+
+```yaml
+lazytainer:
+  # ... configuration omitted for brevity
+  environment:
+    - STATUS_PAGE_MINIGAME_ENABLED=false
+```
+
+#### Status Page Debug Mode
+
+Enable debug mode to keep the status page visible without automatic reload/forwarding while you inspect it:
+
+```yaml
+lazytainer:
+  # ... configuration omitted for brevity
+  environment:
+    - STATUS_PAGE_DEBUG_MODE=true
+```
+
+Default is `false`.
+
 Ready-made themes are available in `examples/status-page-themes/`:
 
 - `status_page.light.css`
