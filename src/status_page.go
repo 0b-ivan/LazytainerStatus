@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	defaultStatusCSSPath = "/app/status_page.css"
-	statusCSSRoute       = "/_lazytainer/status-page.css"
-	defaultEstimatePath  = "/tmp/lazytainer_startup_estimates.json"
-	defaultQuizzesPath   = "/app/game_quotes.json"
-	defaultQuizScorePath = "/tmp/lazytainer_quiz_scores.json"
+	defaultStatusCSSPath  = "/app/status_page.css"
+	statusCSSRoute        = "/_lazytainer/status-page.css"
+	defaultEstimatePath   = "/tmp/lazytainer_startup_estimates.json"
+	defaultQuizzesPath    = "/app/game_quotes.json"
+	defaultQuizScorePath  = "/tmp/lazytainer_quiz_scores.json"
+	defaultLastAccessPath = "/tmp/lazytainer_last_access.json"
 )
 
 type quizOption struct {
@@ -60,6 +61,16 @@ var quizScoreStore = struct {
 }{
 	path:   defaultQuizScorePath,
 	values: map[string]quizSessionState{},
+}
+
+var lastAccessStore = struct {
+	mu     sync.Mutex
+	loaded bool
+	path   string
+	values map[string]string
+}{
+	path:   defaultLastAccessPath,
+	values: map[string]string{},
 }
 
 type startupEstimateRecord struct {
@@ -307,6 +318,67 @@ func getQuizScore(sessionID string) quizSessionState {
 	return state
 }
 
+func lastAccessPathFromEnv() string {
+	path := os.Getenv("LAST_ACCESS_FILE")
+	if path == "" {
+		return defaultLastAccessPath
+	}
+
+	return path
+}
+
+func loadLastAccessLocked() {
+	if lastAccessStore.loaded {
+		return
+	}
+
+	lastAccessStore.loaded = true
+	lastAccessStore.path = lastAccessPathFromEnv()
+
+	raw, err := os.ReadFile(lastAccessStore.path)
+	if err != nil {
+		return
+	}
+
+	var data map[string]string
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return
+	}
+
+	lastAccessStore.values = data
+}
+
+func visitorInfoText(groupName string) string {
+	lastAccessStore.mu.Lock()
+	defer lastAccessStore.mu.Unlock()
+
+	loadLastAccessLocked()
+
+	now := time.Now()
+	lastRaw := lastAccessStore.values[groupName]
+	lastAccessStore.values[groupName] = now.UTC().Format(time.RFC3339)
+
+	raw, err := json.Marshal(lastAccessStore.values)
+	if err == nil {
+		_ = os.WriteFile(lastAccessStore.path, raw, 0o644)
+	}
+
+	if lastRaw == "" {
+		return "Du bist der erste Besucher seit dem letzten Neustart. Gib mir kurz, ich lade gerade die Map. Bis dahin: nimm ein paar Quiz-Runden mit."
+	}
+
+	lastAccess, err := time.Parse(time.RFC3339, lastRaw)
+	if err != nil {
+		return "Du bist der erste Besucher seit dem letzten Zugriff. Gib mir kurz, ich lade gerade die Map. Bis dahin: nimm ein paar Quiz-Runden mit."
+	}
+
+	return fmt.Sprintf(
+		"Du bist der erste Besucher seit dem letzten Zugriff am %s um %s. Gib mir kurz, ich lade gerade die Map. Bis dahin: nimm ein paar Quiz-Runden mit.",
+		lastAccess.Local().Format("02.01.2006"),
+		lastAccess.Local().Format("15:04:05"),
+	)
+}
+
 func cssPathFromEnv() string {
 	cssPath := os.Getenv("STATUS_PAGE_CSS_FILE")
 	if cssPath == "" {
@@ -525,6 +597,7 @@ drained:
 		}
 
 		lastStartupSummary := sp.lastStartupSummary()
+		visitorInfo := visitorInfoText(sp.groupName)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -575,8 +648,9 @@ drained:
 			<span>Punkte:</span>
 			<span class="score-value" id="score-display">0/0</span>
 		</div>
-		<p class="score-info">Scoreboard: Die erste Zahl sind richtige Antworten, die zweite Zahl alle beantworteten Fragen.</p>
-		<p class="score-info">Diese Seite zeigt die Restzeit bis zum Start. Das Quiz verkuerzt die Wartezeit mit kleinen Gaming-Zitaten.</p>
+		<p class="score-info">Scoreboard: Erste Zahl = richtige Treffer, zweite Zahl = gespielte Fragen.</p>
+		<p class="score-info">Der Container waermt sich gerade auf. Solange kannst du mit Gaming-Zitaten ein paar Punkte farmen.</p>
+		<p class="score-info">%s</p>
 	</div>
 
 	<div class="container">
@@ -584,9 +658,9 @@ drained:
 			<div class="card">
 				<div class="header">
 					<span class="dot" aria-hidden="true"></span>
-					<h1>Container startet gerade</h1>
+					<h1>Container bootet gerade</h1>
 				</div>
-				<p>Container der Gruppe <strong>%s</strong> wird gerade gestartet und ist in Kuerze erreichbar.</p>
+				<p>Container der Gruppe <strong>%s</strong> faehrt gerade hoch und ist gleich am Start.</p>
 				<p class="last-startup">%s</p>
 				<div class="countdown" aria-live="polite"><span id="remaining">%d</span> s</div>
 				<p class="countdown-label">Verbleibend bis zum Reload</p>
@@ -610,7 +684,9 @@ drained:
 
 		async function loadQuiz() {
 			try {
-				const res = await fetch('/api/quiz?session=' + encodeURIComponent(SESSION_ID));
+				const res = await fetch('api/quiz?session=' + encodeURIComponent(SESSION_ID), {
+					headers: { 'Accept': 'application/json' }
+				});
 				const data = await res.json();
 				currentQuestion = data.question;
 				score = data.score;
@@ -671,7 +747,7 @@ drained:
 			}
 
 			try {
-				const res = await fetch('/api/quiz/answer', {
+				let res = await fetch('api/quiz/answer', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
@@ -680,6 +756,19 @@ drained:
 						questionId: currentQuestion.id
 					})
 				});
+
+				// Fallback for environments that normalize paths differently.
+				if (res.status === 404 || res.status === 405) {
+					res = await fetch('/api/quiz/answer', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							session: SESSION_ID,
+							answerIndex: answerIndex,
+							questionId: currentQuestion.id
+						})
+					});
+				}
 
 				if (!res.ok) {
 					throw new Error('Antwort konnte nicht gesendet werden (' + res.status + ')');
@@ -758,11 +847,16 @@ drained:
 		loadQuiz();
 	</script>
 </body>
-</html>`, sp.groupName, lastStartupSummary, remaining, sessionID, remaining)
+</html>`, visitorInfo, sp.groupName, lastStartupSummary, remaining, sessionID, remaining)
 	})
 
 	// Quiz API: Get next question
-	mux.HandleFunc("/api/quiz", func(w http.ResponseWriter, r *http.Request) {
+	quizGetHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		sessionID := r.URL.Query().Get("session")
 		if sessionID == "" {
 			http.Error(w, "Missing session", http.StatusBadRequest)
@@ -781,10 +875,12 @@ drained:
 			"totalAnswered": state.TotalAnswered,
 		}
 		_ = json.NewEncoder(w).Encode(response)
-	})
+	}
+	mux.HandleFunc("/api/quiz", quizGetHandler)
+	mux.HandleFunc("/api/quiz/", quizGetHandler)
 
 	// Quiz API: Submit answer
-	mux.HandleFunc("/api/quiz/answer", func(w http.ResponseWriter, r *http.Request) {
+	quizAnswerHandler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -835,6 +931,20 @@ drained:
 			"message":       "",
 		}
 		_ = json.NewEncoder(w).Encode(response)
+	}
+	mux.HandleFunc("/api/quiz/answer", quizAnswerHandler)
+	mux.HandleFunc("/api/quiz/answer/", quizAnswerHandler)
+
+	// Prefix fallback for API paths, avoids accidental handling by "/" route.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/quiz/answer"):
+			quizAnswerHandler(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/quiz"):
+			quizGetHandler(w, r)
+		default:
+			http.NotFound(w, r)
+		}
 	})
 
 	startedListener := 0
