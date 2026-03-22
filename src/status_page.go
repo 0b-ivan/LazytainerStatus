@@ -17,6 +17,7 @@ import (
 const (
 	defaultStatusCSSPath  = "/app/status_page.css"
 	statusCSSRoute        = "/_lazytainer/status-page.css"
+	statusAPIBaseRoute    = "/_lazytainer/api"
 	defaultEstimatePath   = "/tmp/lazytainer_startup_estimates.json"
 	defaultQuizzesPath    = "/app/game_quotes.json"
 	defaultQuizScorePath  = "/tmp/lazytainer_quiz_scores.json"
@@ -723,6 +724,7 @@ drained:
 	<script>
 		const MINIGAME_ENABLED = %t;
 		const DEBUG_MODE = %t;
+		const QUIZ_API_BASE = '` + statusAPIBaseRoute + `';
 		const SESSION_ID = '%s';
 		let currentQuestion = null;
 		let score = 0;
@@ -731,7 +733,7 @@ drained:
 
 		async function loadQuiz() {
 			try {
-				const res = await fetch('/api/quiz?session=' + encodeURIComponent(SESSION_ID), {
+				const res = await fetch(QUIZ_API_BASE + '/quiz?session=' + encodeURIComponent(SESSION_ID), {
 					headers: { 'Accept': 'application/json' }
 				});
 				const data = await res.json();
@@ -794,7 +796,7 @@ drained:
 			}
 
 			try {
-				let res = await fetch('/api/quiz/answer', {
+				let res = await fetch(QUIZ_API_BASE + '/quiz/answer', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
@@ -932,6 +934,8 @@ drained:
 		}
 		_ = json.NewEncoder(w).Encode(response)
 	}
+	mux.HandleFunc(statusAPIBaseRoute+"/quiz", quizGetHandler)
+	mux.HandleFunc(statusAPIBaseRoute+"/quiz/", quizGetHandler)
 	mux.HandleFunc("/api/quiz", quizGetHandler)
 	mux.HandleFunc("/api/quiz/", quizGetHandler)
 
@@ -993,10 +997,24 @@ drained:
 		}
 		_ = json.NewEncoder(w).Encode(response)
 	}
+	mux.HandleFunc(statusAPIBaseRoute+"/quiz/answer", quizAnswerHandler)
+	mux.HandleFunc(statusAPIBaseRoute+"/quiz/answer/", quizAnswerHandler)
 	mux.HandleFunc("/api/quiz/answer", quizAnswerHandler)
 	mux.HandleFunc("/api/quiz/answer/", quizAnswerHandler)
 
 	// Prefix fallback for API paths, avoids accidental handling by "/" route.
+	mux.HandleFunc(statusAPIBaseRoute+"/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, statusAPIBaseRoute+"/quiz/answer"):
+			quizAnswerHandler(w, r)
+		case strings.HasPrefix(r.URL.Path, statusAPIBaseRoute+"/quiz"):
+			quizGetHandler(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	// Backward compatibility for legacy /api paths.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/api/quiz/answer"):
