@@ -26,6 +26,7 @@ type LazyGroup struct {
 	pollRate            uint16   // how frequently to poll traffic statistics
 	ports               []uint16 // list of ports, which happens to also be a 16 bit range, how convenient!
 	sleepMethod         string   // whether to stop or pause the container
+	statusPage          bool     // expose a temporary status page while the group is stopped
 }
 
 var err error
@@ -34,6 +35,11 @@ func (lg LazyGroup) MainLoop() {
 	// rxPacketCount is continuously updated by the getRxPackets goroutine
 	var rxPacketCount int
 	go lg.getRxPackets(&rxPacketCount)
+
+	var startupPage *startupStatusPage
+	if lg.statusPage {
+		startupPage = newStartupStatusPage(lg.groupName, lg.ports)
+	}
 
 	inactiveSeconds := 0
 	// initialize a slice to keep track of recent network traffic
@@ -47,6 +53,9 @@ func (lg LazyGroup) MainLoop() {
 		}
 		// if the container is running, see if it needs to be stopped
 		if lg.isGroupOn() {
+			if startupPage != nil {
+				startupPage.Stop()
+			}
 			debugLogger.Println(rxHistory[len(rxHistory)-1]-rxHistory[0], "packets received in the last", lg.inactiveTimeout, "seconds")
 			// if no clients are active on ports and threshold packets haven't been received in TIMEOUT secs
 			if (lg.ignoreActiveClients || lg.getActiveClients() == 0) && rxHistory[0]+int(lg.minPacketThreshold) > rxHistory[len(rxHistory)-1] {
@@ -60,9 +69,21 @@ func (lg LazyGroup) MainLoop() {
 				inactiveSeconds = 0
 			}
 		} else {
+			if startupPage != nil {
+				startupPage.Start()
+			}
+
+			wakeRequested := startupPage != nil && startupPage.ConsumeStartSignal()
+			if wakeRequested {
+				debugLogger.Println("status page received wake request for group", lg.groupName)
+			}
+
 			// if more than THRESHOLD rx in last RXHISTSECONDS seconds, start the container
-			if rxHistory[0]+int(lg.minPacketThreshold) < rxHistory[len(rxHistory)-1] {
+			if wakeRequested || rxHistory[0]+int(lg.minPacketThreshold) < rxHistory[len(rxHistory)-1] {
 				inactiveSeconds = 0
+				if startupPage != nil {
+					startupPage.Stop()
+				}
 				lg.startContainers()
 			} else {
 				debugLogger.Println(rxHistory[len(rxHistory)-1], "received out of", rxHistory[0]+int(lg.minPacketThreshold), "packets needed to restart container")

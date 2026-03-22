@@ -82,6 +82,7 @@ Group properties that can be changed include:
 | pollRate            | How frequently (seconds) to check network activity                                                                                                                                                 | No       | 30      |
 | sleepMethod         | How to put the container to sleep. Can be `stop` or `pause`                                                                                                                                        | No       | `stop`  |
 | netInterface        | Network interface to listen on                                                                                                                                                                     | No       | `eth0`  |
+| statusPage          | If true, Lazytainer serves a temporary HTTP status page on the group's configured ports while the group is stopped and wake-up is in progress. Only useful for HTTP/TCP services and `sleepMethod=stop` | No       | false   |
 
 ### Additional Configuration
 

@@ -185,6 +185,17 @@ func configureFromLabels() map[string]LazyGroup {
 				debugLogger.Println("Using default sleepMethod of stop because " + prefix + groupName + ".sleepMethod was not set")
 			}
 
+			// configure statusPage
+			statusPage := false
+			labelValueAsString, exists = labels[prefix+groupName+".statusPage"]
+			if exists {
+				val, err := strconv.ParseBool(labelValueAsString)
+				check(err)
+				statusPage = val
+			} else {
+				debugLogger.Println("Using default statusPage of false because " + prefix + groupName + ".statusPage was not set")
+			}
+
 			groups[groupName] = LazyGroup{
 				groupName:           groupName,
 				inactiveTimeout:     inactiveTimeout,
@@ -194,6 +205,7 @@ func configureFromLabels() map[string]LazyGroup {
 				pollRate:            pollRate,
 				ports:               ports,
 				sleepMethod:         sleepMethod,
+				statusPage:          statusPage,
 			}
 		}
 	}

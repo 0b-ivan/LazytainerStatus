@@ -29,6 +29,7 @@ services:
       - "lazytainer.group.group2.inactiveTimeout=10"
       - "lazytainer.group.group2.ports=81,82"
       - "lazytainer.group.group2.sleepMethod=stop" # can be either "stop" or "pause", or left blank for stop
+      - "lazytainer.group.group2.statusPage=true" # serves a temporary startup page while group2 is waking up
 
   whoami1:
     container_name: whoami1
