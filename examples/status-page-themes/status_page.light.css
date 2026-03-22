@@ -66,6 +66,12 @@ p {
   line-height: 1.5;
 }
 
+.last-startup {
+  margin-top: 14px;
+  font-size: 0.92rem;
+  color: #52687c;
+}
+
 .countdown {
   margin-top: 20px;
   font-size: clamp(2rem, 8vw, 3.4rem);

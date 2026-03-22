@@ -85,6 +85,8 @@ Group properties that can be changed include:
 | statusPage          | If true, Lazytainer serves a temporary HTTP status page on the group's configured ports while the group is stopped and wake-up is in progress. Only useful for HTTP/TCP services and `sleepMethod=stop` | No       | false   |
 | startupEstimate     | Initial countdown seed in seconds for the status page. Lazytainer then dynamically learns real startup durations per group and uses those values for future wake-ups.                         | No       | 30      |
 
+When `statusPage=true` is active, the page also shows the last measured startup duration and its timestamp.
+
 When `statusPage=true` is active, API-style requests (e.g. `Accept: application/json` or `/api...` paths) receive a machine-readable wait signal:
 
 - HTTP `503 Service Unavailable`

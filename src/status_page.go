@@ -20,14 +20,20 @@ const (
 	defaultEstimatePath  = "/tmp/lazytainer_startup_estimates.json"
 )
 
+type startupEstimateRecord struct {
+	EstimateSeconds     int64  `json:"estimateSeconds"`
+	LastDurationSeconds int64  `json:"lastDurationSeconds,omitempty"`
+	LastCompletedAt     string `json:"lastCompletedAt,omitempty"`
+}
+
 var startupEstimateStore = struct {
 	mu     sync.Mutex
 	loaded bool
 	path   string
-	values map[string]int64
+	values map[string]startupEstimateRecord
 }{
 	path:   defaultEstimatePath,
-	values: map[string]int64{},
+	values: map[string]startupEstimateRecord{},
 }
 
 type startupStatusPage struct {
@@ -40,10 +46,12 @@ type startupStatusPage struct {
 	running   bool
 	wakeCh    chan struct{}
 
-	configuredEstimate time.Duration
-	observedEstimate   time.Duration
-	wakeRequestedAt    time.Time
-	cssPath            string
+	configuredEstimate  time.Duration
+	observedEstimate    time.Duration
+	lastStartupDuration time.Duration
+	lastCompletedAt     time.Time
+	wakeRequestedAt     time.Time
+	cssPath             string
 }
 
 func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate time.Duration) *startupStatusPage {
@@ -51,15 +59,17 @@ func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate t
 		configuredEstimate = 30 * time.Second
 	}
 
-	storedEstimate := getStoredStartupEstimate(groupName)
+	storedEstimate, lastDuration, lastCompletedAt := getStoredStartupData(groupName)
 
 	return &startupStatusPage{
-		groupName:          groupName,
-		ports:              ports,
-		wakeCh:             make(chan struct{}, 1),
-		configuredEstimate: configuredEstimate,
-		observedEstimate:   storedEstimate,
-		cssPath:            cssPathFromEnv(),
+		groupName:           groupName,
+		ports:               ports,
+		wakeCh:              make(chan struct{}, 1),
+		configuredEstimate:  configuredEstimate,
+		observedEstimate:    storedEstimate,
+		lastStartupDuration: lastDuration,
+		lastCompletedAt:     lastCompletedAt,
+		cssPath:             cssPathFromEnv(),
 	}
 }
 
@@ -85,33 +95,68 @@ func loadStartupEstimatesLocked() {
 		return
 	}
 
-	var loaded map[string]int64
-	if err := json.Unmarshal(raw, &loaded); err != nil {
+	var loaded map[string]startupEstimateRecord
+	if err := json.Unmarshal(raw, &loaded); err == nil {
+		startupEstimateStore.values = loaded
 		return
 	}
 
-	startupEstimateStore.values = loaded
-}
-
-func getStoredStartupEstimate(groupName string) time.Duration {
-	startupEstimateStore.mu.Lock()
-	defer startupEstimateStore.mu.Unlock()
-
-	loadStartupEstimatesLocked()
-	seconds, exists := startupEstimateStore.values[groupName]
-	if !exists || seconds <= 0 {
-		return 0
+	// Backward compatibility for older format: {"group": <seconds>}.
+	var legacy map[string]int64
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return
 	}
 
-	return time.Duration(seconds) * time.Second
+	converted := make(map[string]startupEstimateRecord, len(legacy))
+	for groupName, seconds := range legacy {
+		converted[groupName] = startupEstimateRecord{EstimateSeconds: seconds}
+	}
+	startupEstimateStore.values = converted
 }
 
-func saveStartupEstimate(groupName string, d time.Duration) {
+func getStoredStartupData(groupName string) (estimate time.Duration, lastDuration time.Duration, lastCompletedAt time.Time) {
 	startupEstimateStore.mu.Lock()
 	defer startupEstimateStore.mu.Unlock()
 
 	loadStartupEstimatesLocked()
-	startupEstimateStore.values[groupName] = int64(d.Round(time.Second) / time.Second)
+	record, exists := startupEstimateStore.values[groupName]
+	if !exists {
+		return 0, 0, time.Time{}
+	}
+
+	if record.EstimateSeconds > 0 {
+		estimate = time.Duration(record.EstimateSeconds) * time.Second
+	}
+	if record.LastDurationSeconds > 0 {
+		lastDuration = time.Duration(record.LastDurationSeconds) * time.Second
+	}
+	if record.LastCompletedAt != "" {
+		parsed, err := time.Parse(time.RFC3339, record.LastCompletedAt)
+		if err == nil {
+			lastCompletedAt = parsed
+		}
+	}
+
+	return estimate, lastDuration, lastCompletedAt
+}
+
+func saveStartupEstimate(groupName string, estimate time.Duration, lastDuration time.Duration, lastCompletedAt time.Time) {
+	startupEstimateStore.mu.Lock()
+	defer startupEstimateStore.mu.Unlock()
+
+	loadStartupEstimatesLocked()
+
+	record := startupEstimateRecord{}
+	if estimate > 0 {
+		record.EstimateSeconds = int64(estimate.Round(time.Second) / time.Second)
+	}
+	if lastDuration > 0 {
+		record.LastDurationSeconds = int64(lastDuration.Round(time.Second) / time.Second)
+	}
+	if !lastCompletedAt.IsZero() {
+		record.LastCompletedAt = lastCompletedAt.UTC().Format(time.RFC3339)
+	}
+	startupEstimateStore.values[groupName] = record
 
 	raw, err := json.Marshal(startupEstimateStore.values)
 	if err != nil {
@@ -144,48 +189,6 @@ func (sp *startupStatusPage) getStatusCSS() string {
 	--muted: #4d6274;
 	--ok: #0f8f67;
 	--shadow: 0 24px 50px rgba(5, 20, 33, 0.35);
-}
-
-func expectsJSON(r *http.Request) bool {
-	accept := strings.ToLower(r.Header.Get("Accept"))
-	contentType := strings.ToLower(r.Header.Get("Content-Type"))
-	path := strings.ToLower(r.URL.Path)
-
-	if strings.Contains(accept, "application/json") {
-		return true
-	}
-	if strings.Contains(contentType, "application/json") {
-		return true
-	}
-	if strings.HasPrefix(path, "/api") {
-		return true
-	}
-
-	return false
-}
-
-func writeAPIWaitResponse(w http.ResponseWriter, groupName string, remaining int) {
-	if remaining < 1 {
-		remaining = 1
-	}
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Retry-After", strconv.Itoa(remaining))
-	w.Header().Set("X-Lazytainer-Status", "starting")
-	w.Header().Set("X-Lazytainer-Wait-Seconds", strconv.Itoa(remaining))
-	w.WriteHeader(http.StatusServiceUnavailable)
-
-	response := map[string]any{
-		"status":          "starting",
-		"group":           groupName,
-		"waitSeconds":     remaining,
-		"retryAfter":      remaining,
-		"statusCode":      http.StatusServiceUnavailable,
-		"statusCodeReason": "Service Unavailable",
-	}
-
-	_ = json.NewEncoder(w).Encode(response)
 }
 
 * { box-sizing: border-box; }
@@ -244,6 +247,12 @@ p {
 	line-height: 1.5;
 }
 
+.last-startup {
+	margin-top: 14px;
+	font-size: 0.92rem;
+	color: #3f5568;
+}
+
 .countdown {
 	margin-top: 20px;
 	font-size: clamp(2rem, 8vw, 3.4rem);
@@ -264,6 +273,67 @@ p {
 	}
 
 	return string(cssBytes)
+}
+
+func expectsJSON(r *http.Request) bool {
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	path := strings.ToLower(r.URL.Path)
+
+	if strings.Contains(accept, "application/json") {
+		return true
+	}
+	if strings.Contains(contentType, "application/json") {
+		return true
+	}
+	if strings.HasPrefix(path, "/api") {
+		return true
+	}
+
+	return false
+}
+
+func (sp *startupStatusPage) lastStartupSummary() string {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if sp.lastStartupDuration <= 0 || sp.lastCompletedAt.IsZero() {
+		return "Noch kein gemessener Start vorhanden."
+	}
+
+	return fmt.Sprintf(
+		"Der letzte Start dauerte %d Sekunden am %s um %s.",
+		int(sp.lastStartupDuration.Round(time.Second)/time.Second),
+		sp.lastCompletedAt.Local().Format("02.01.2006"),
+		sp.lastCompletedAt.Local().Format("15:04:05"),
+	)
+}
+
+func writeAPIWaitResponse(w http.ResponseWriter, sp *startupStatusPage, remaining int) {
+	if remaining < 1 {
+		remaining = 1
+	}
+
+	lastSummary := sp.lastStartupSummary()
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", strconv.Itoa(remaining))
+	w.Header().Set("X-Lazytainer-Status", "starting")
+	w.Header().Set("X-Lazytainer-Wait-Seconds", strconv.Itoa(remaining))
+	w.WriteHeader(http.StatusServiceUnavailable)
+
+	response := map[string]any{
+		"status":           "starting",
+		"group":            sp.groupName,
+		"waitSeconds":      remaining,
+		"retryAfter":       remaining,
+		"lastStartup":      lastSummary,
+		"statusCode":       http.StatusServiceUnavailable,
+		"statusCodeReason": "Service Unavailable",
+	}
+
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (sp *startupStatusPage) Start() {
@@ -311,9 +381,11 @@ drained:
 		}
 
 		if expectsJSON(r) {
-			writeAPIWaitResponse(w, sp.groupName, remaining)
+			writeAPIWaitResponse(w, sp, remaining)
 			return
 		}
+
+		lastStartupSummary := sp.lastStartupSummary()
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -337,6 +409,7 @@ drained:
 		</div>
 
 		<p>Die Anwendung in Gruppe <strong>%s</strong> wird gerade hochgefahren und ist in Kuerze verfuegbar.</p>
+		<p class="last-startup">%s</p>
 		<div class="countdown" aria-live="polite"><span id="remaining">%d</span> s</div>
 		<p class="countdown-label">Verbleibend bis zum automatischen Reload</p>
 	</main>
@@ -378,7 +451,7 @@ drained:
 		})();
 	</script>
 </body>
-	</html>`, sp.groupName, remaining, remaining)
+	</html>`, sp.groupName, lastStartupSummary, remaining, remaining)
 	})
 
 	startedListener := 0
@@ -482,8 +555,10 @@ func (sp *startupStatusPage) RecordStartupDuration(d time.Duration) {
 		// Smooth startup estimates so one slow start does not dominate future ETAs.
 		sp.observedEstimate = (sp.observedEstimate*3 + d) / 4
 	}
+	sp.lastStartupDuration = d
+	sp.lastCompletedAt = time.Now()
 	sp.wakeRequestedAt = time.Time{}
-	saveStartupEstimate(sp.groupName, sp.observedEstimate)
+	saveStartupEstimate(sp.groupName, sp.observedEstimate, sp.lastStartupDuration, sp.lastCompletedAt)
 }
 
 func (sp *startupStatusPage) startupTiming() int {
