@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -145,6 +146,48 @@ func (sp *startupStatusPage) getStatusCSS() string {
 	--shadow: 0 24px 50px rgba(5, 20, 33, 0.35);
 }
 
+func expectsJSON(r *http.Request) bool {
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	path := strings.ToLower(r.URL.Path)
+
+	if strings.Contains(accept, "application/json") {
+		return true
+	}
+	if strings.Contains(contentType, "application/json") {
+		return true
+	}
+	if strings.HasPrefix(path, "/api") {
+		return true
+	}
+
+	return false
+}
+
+func writeAPIWaitResponse(w http.ResponseWriter, groupName string, remaining int) {
+	if remaining < 1 {
+		remaining = 1
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", strconv.Itoa(remaining))
+	w.Header().Set("X-Lazytainer-Status", "starting")
+	w.Header().Set("X-Lazytainer-Wait-Seconds", strconv.Itoa(remaining))
+	w.WriteHeader(http.StatusServiceUnavailable)
+
+	response := map[string]any{
+		"status":          "starting",
+		"group":           groupName,
+		"waitSeconds":     remaining,
+		"retryAfter":      remaining,
+		"statusCode":      http.StatusServiceUnavailable,
+		"statusCodeReason": "Service Unavailable",
+	}
+
+	_ = json.NewEncoder(w).Encode(response)
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -267,9 +310,16 @@ drained:
 		default:
 		}
 
+		if expectsJSON(r) {
+			writeAPIWaitResponse(w, sp.groupName, remaining)
+			return
+		}
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Retry-After", "5")
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, remaining)))
+		w.Header().Set("X-Lazytainer-Status", "starting")
+		w.Header().Set("X-Lazytainer-Wait-Seconds", strconv.Itoa(max(1, remaining)))
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = fmt.Fprintf(w, `<!doctype html>
 <html lang="de">
