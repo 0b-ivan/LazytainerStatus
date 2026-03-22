@@ -73,7 +73,203 @@ drained:
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Retry-After", "5")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = fmt.Fprintf(w, "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Container wird gestartet</title></head><body style=\"font-family: sans-serif; margin: 2rem; line-height: 1.5;\"><h1>Container startet gerade</h1><p>Die Anwendung in Gruppe <strong>%s</strong> wird gerade hochgefahren und ist in Kuerze verfuegbar.</p><p>Geschaetzte Startdauer: <strong>%d Sekunden</strong></p><p>Voraussichtlich verbleibend: <strong>%d Sekunden</strong></p><p>Bitte aktualisiere die Seite in ein paar Sekunden erneut.</p></body></html>", sp.groupName, estimated, remaining)
+		_, _ = fmt.Fprintf(w, `<!doctype html>
+<html lang="de">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Container wird gestartet</title>
+	<style>
+		:root {
+			--bg-top: #071b2e;
+			--bg-bottom: #1b3a57;
+			--card: #f4f8fb;
+			--text: #102131;
+			--muted: #4d6274;
+			--accent: #147bd1;
+			--accent-2: #46b4e8;
+			--ok: #0f8f67;
+			--shadow: 0 24px 50px rgba(5, 20, 33, 0.35);
+		}
+
+		* { box-sizing: border-box; }
+
+		body {
+			margin: 0;
+			min-height: 100vh;
+			display: grid;
+			place-items: center;
+			color: var(--text);
+			background: radial-gradient(circle at 10%% 20%%, #2f5f84 0%%, transparent 45%%),
+									radial-gradient(circle at 85%% 85%%, #0d8f9a 0%%, transparent 45%%),
+									linear-gradient(160deg, var(--bg-top), var(--bg-bottom));
+			font-family: "Segoe UI", "Noto Sans", sans-serif;
+			padding: 24px;
+		}
+
+		.card {
+			width: min(680px, 100%%);
+			background: linear-gradient(180deg, #ffffff 0%%, var(--card) 100%%);
+			border-radius: 18px;
+			box-shadow: var(--shadow);
+			padding: 30px;
+			position: relative;
+			overflow: hidden;
+		}
+
+		.card::after {
+			content: "";
+			position: absolute;
+			inset: 0;
+			background: linear-gradient(120deg, rgba(20, 123, 209, 0.08), rgba(70, 180, 232, 0.08));
+			pointer-events: none;
+		}
+
+		.header {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			margin-bottom: 16px;
+		}
+
+		.dot {
+			width: 12px;
+			height: 12px;
+			border-radius: 50%%;
+			background: var(--ok);
+			box-shadow: 0 0 0 0 rgba(15, 143, 103, 0.55);
+			animation: pulse 1.6s infinite;
+		}
+
+		@keyframes pulse {
+			0%% { box-shadow: 0 0 0 0 rgba(15, 143, 103, 0.55); }
+			70%% { box-shadow: 0 0 0 12px rgba(15, 143, 103, 0); }
+			100%% { box-shadow: 0 0 0 0 rgba(15, 143, 103, 0); }
+		}
+
+		h1 {
+			margin: 0;
+			font-size: clamp(1.35rem, 2.5vw, 1.8rem);
+			letter-spacing: 0.01em;
+		}
+
+		p {
+			margin: 10px 0;
+			color: var(--muted);
+			line-height: 1.5;
+		}
+
+		.stats {
+			margin-top: 22px;
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 12px;
+		}
+
+		.stat {
+			background: #e9f3fb;
+			border: 1px solid #d3e4f5;
+			border-radius: 12px;
+			padding: 14px;
+		}
+
+		.stat-label {
+			font-size: 0.86rem;
+			color: #4c6274;
+			margin-bottom: 6px;
+		}
+
+		.stat-value {
+			font-size: 1.4rem;
+			color: var(--text);
+			font-weight: 700;
+			font-variant-numeric: tabular-nums;
+		}
+
+		.progress {
+			margin-top: 18px;
+			width: 100%%;
+			height: 12px;
+			background: #d6e6f4;
+			border-radius: 999px;
+			overflow: hidden;
+		}
+
+		.progress-bar {
+			width: 0%%;
+			height: 100%%;
+			background: linear-gradient(90deg, var(--accent), var(--accent-2));
+			transition: width 0.8s ease;
+		}
+
+		.tiny {
+			margin-top: 12px;
+			font-size: 0.85rem;
+			color: #597387;
+		}
+
+		@media (max-width: 620px) {
+			.card { padding: 20px; }
+			.stats { grid-template-columns: 1fr; }
+		}
+	</style>
+</head>
+<body>
+	<main class="card">
+		<div class="header">
+			<span class="dot" aria-hidden="true"></span>
+			<h1>Container startet gerade</h1>
+		</div>
+
+		<p>Die Anwendung in Gruppe <strong>%s</strong> wird gerade hochgefahren und ist in Kuerze verfuegbar.</p>
+
+		<section class="stats" aria-live="polite">
+			<article class="stat">
+				<div class="stat-label">Geschaetzte Startdauer</div>
+				<div class="stat-value"><span id="estimated">%d</span> s</div>
+			</article>
+			<article class="stat">
+				<div class="stat-label">Voraussichtlich verbleibend</div>
+				<div class="stat-value"><span id="remaining">%d</span> s</div>
+			</article>
+		</section>
+
+		<div class="progress" role="progressbar" aria-label="Startfortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+			<div class="progress-bar" id="progress"></div>
+		</div>
+		<p class="tiny">Die Anzeige aktualisiert sich live. Falls der Dienst bereits laeuft, bitte Seite neu laden.</p>
+	</main>
+
+	<script>
+		(function () {
+			const estimated = Math.max(1, Number(%d));
+			let remaining = Math.max(0, Number(%d));
+
+			const estimatedEl = document.getElementById("estimated");
+			const remainingEl = document.getElementById("remaining");
+			const progressEl = document.getElementById("progress");
+			const progressWrap = document.querySelector(".progress");
+
+			function render() {
+				estimatedEl.textContent = String(estimated);
+				remainingEl.textContent = String(remaining);
+
+				const done = Math.max(0, Math.min(100, ((estimated - remaining) / estimated) * 100));
+				progressEl.style.width = done.toFixed(1) + "%%";
+				progressWrap.setAttribute("aria-valuenow", String(Math.round(done)));
+			}
+
+			render();
+			setInterval(function () {
+				if (remaining > 0) {
+					remaining -= 1;
+					render();
+				}
+			}, 1000);
+		})();
+	</script>
+</body>
+</html>`, sp.groupName, estimated, remaining, estimated, remaining)
 	})
 
 	startedListener := 0
