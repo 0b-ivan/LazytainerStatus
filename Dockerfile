@@ -11,5 +11,6 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM alpine
 RUN apk add --update libpcap-dev
 COPY --from=build /app/lazytainer /app/lazytainer
+COPY --from=build /app/status_page.css /app/status_page.css
 ENTRYPOINT [ "./app/lazytainer" ]
 

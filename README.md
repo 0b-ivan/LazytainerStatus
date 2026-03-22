@@ -83,7 +83,7 @@ Group properties that can be changed include:
 | sleepMethod         | How to put the container to sleep. Can be `stop` or `pause`                                                                                                                                        | No       | `stop`  |
 | netInterface        | Network interface to listen on                                                                                                                                                                     | No       | `eth0`  |
 | statusPage          | If true, Lazytainer serves a temporary HTTP status page on the group's configured ports while the group is stopped and wake-up is in progress. Only useful for HTTP/TCP services and `sleepMethod=stop` | No       | false   |
-| startupEstimate     | Estimated startup time in seconds shown on the status page. Lazytainer also refines this value over time using observed startup durations.                                                     | No       | 30      |
+| startupEstimate     | Initial countdown duration in seconds for the status page. Lazytainer also refines this value over time using observed startup durations.                                                       | No       | 30      |
 
 ### Additional Configuration
 
@@ -119,4 +119,37 @@ lazytainer:
   # ... configuration omitted for brevity
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock:ro
+```
+
+#### Status Page CSS
+
+If `statusPage=true` is enabled, Lazytainer serves CSS from `/app/status_page.css`.
+
+To use your own styling, mount a custom file and (optionally) set `STATUS_PAGE_CSS_FILE`:
+
+```yaml
+lazytainer:
+  # ... configuration omitted for brevity
+  environment:
+    - STATUS_PAGE_CSS_FILE=/custom/status_page.css # optional, defaults to /app/status_page.css
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - ./status_page.css:/custom/status_page.css:ro
+```
+
+Ready-made themes are available in `examples/status-page-themes/`:
+
+- `status_page.light.css`
+- `status_page.dark.css`
+
+Example using the dark theme:
+
+```yaml
+lazytainer:
+  # ... configuration omitted for brevity
+  environment:
+    - STATUS_PAGE_CSS_FILE=/custom/status_page.css
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - ./examples/status-page-themes/status_page.dark.css:/custom/status_page.css:ro
 ```

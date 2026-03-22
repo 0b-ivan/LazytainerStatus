@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
+)
+
+const (
+	defaultStatusCSSPath = "/app/status_page.css"
+	statusCSSRoute       = "/_lazytainer/status-page.css"
 )
 
 type startupStatusPage struct {
@@ -25,6 +30,7 @@ type startupStatusPage struct {
 	configuredEstimate time.Duration
 	observedEstimate   time.Duration
 	wakeRequestedAt    time.Time
+	cssPath            string
 }
 
 func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate time.Duration) *startupStatusPage {
@@ -37,7 +43,109 @@ func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate t
 		ports:              ports,
 		wakeCh:             make(chan struct{}, 1),
 		configuredEstimate: configuredEstimate,
+		cssPath:            cssPathFromEnv(),
 	}
+}
+
+func cssPathFromEnv() string {
+	cssPath := os.Getenv("STATUS_PAGE_CSS_FILE")
+	if cssPath == "" {
+		return defaultStatusCSSPath
+	}
+
+	return cssPath
+}
+
+func (sp *startupStatusPage) getStatusCSS() string {
+	cssBytes, err := os.ReadFile(sp.cssPath)
+	if err != nil {
+		debugLogger.Printf("status page: could not read CSS file %s for group %s: %v\n", sp.cssPath, sp.groupName, err)
+		return `:root {
+	--bg-top: #071b2e;
+	--bg-bottom: #1b3a57;
+	--card: #f4f8fb;
+	--text: #102131;
+	--muted: #4d6274;
+	--ok: #0f8f67;
+	--shadow: 0 24px 50px rgba(5, 20, 33, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+	margin: 0;
+	min-height: 100vh;
+	display: grid;
+	place-items: center;
+	color: var(--text);
+	background: radial-gradient(circle at 10% 20%, #2f5f84 0%, transparent 45%),
+							radial-gradient(circle at 85% 85%, #0d8f9a 0%, transparent 45%),
+							linear-gradient(160deg, var(--bg-top), var(--bg-bottom));
+	font-family: "Segoe UI", "Noto Sans", sans-serif;
+	padding: 24px;
+}
+
+.card {
+	width: min(640px, 100%);
+	background: linear-gradient(180deg, #ffffff 0%, var(--card) 100%);
+	border-radius: 18px;
+	box-shadow: var(--shadow);
+	padding: 30px;
+}
+
+.header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 16px;
+}
+
+.dot {
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: var(--ok);
+	box-shadow: 0 0 0 0 rgba(15, 143, 103, 0.55);
+	animation: pulse 1.6s infinite;
+}
+
+@keyframes pulse {
+	0% { box-shadow: 0 0 0 0 rgba(15, 143, 103, 0.55); }
+	70% { box-shadow: 0 0 0 12px rgba(15, 143, 103, 0); }
+	100% { box-shadow: 0 0 0 0 rgba(15, 143, 103, 0); }
+}
+
+h1 {
+	margin: 0;
+	font-size: clamp(1.35rem, 2.5vw, 1.8rem);
+}
+
+p {
+	margin: 10px 0;
+	color: var(--muted);
+	line-height: 1.5;
+}
+
+.countdown {
+	margin-top: 20px;
+	font-size: clamp(2rem, 8vw, 3.4rem);
+	font-weight: 800;
+	font-variant-numeric: tabular-nums;
+	color: var(--text);
+}
+
+.countdown-label {
+	margin-top: 4px;
+	font-size: 0.9rem;
+	color: #597387;
+}
+
+@media (max-width: 620px) {
+	.card { padding: 20px; }
+}`
+	}
+
+	return string(cssBytes)
 }
 
 func (sp *startupStatusPage) Start() {
@@ -60,9 +168,24 @@ drained:
 	sp.listeners = make(map[uint16]net.Listener)
 	sp.wakeRequestedAt = time.Time{}
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc(statusCSSRoute, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(sp.getStatusCSS()))
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == statusCSSRoute {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write([]byte(sp.getStatusCSS()))
+			return
+		}
+
 		sp.MarkWakeRequested()
-		remaining, estimated := sp.startupTiming()
+		remaining := sp.startupTiming()
 
 		select {
 		case sp.wakeCh <- struct{}{}:
@@ -79,140 +202,7 @@ drained:
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Container wird gestartet</title>
-	<style>
-		:root {
-			--bg-top: #071b2e;
-			--bg-bottom: #1b3a57;
-			--card: #f4f8fb;
-			--text: #102131;
-			--muted: #4d6274;
-			--accent: #147bd1;
-			--accent-2: #46b4e8;
-			--ok: #0f8f67;
-			--shadow: 0 24px 50px rgba(5, 20, 33, 0.35);
-		}
-
-		* { box-sizing: border-box; }
-
-		body {
-			margin: 0;
-			min-height: 100vh;
-			display: grid;
-			place-items: center;
-			color: var(--text);
-			background: radial-gradient(circle at 10%% 20%%, #2f5f84 0%%, transparent 45%%),
-									radial-gradient(circle at 85%% 85%%, #0d8f9a 0%%, transparent 45%%),
-									linear-gradient(160deg, var(--bg-top), var(--bg-bottom));
-			font-family: "Segoe UI", "Noto Sans", sans-serif;
-			padding: 24px;
-		}
-
-		.card {
-			width: min(680px, 100%%);
-			background: linear-gradient(180deg, #ffffff 0%%, var(--card) 100%%);
-			border-radius: 18px;
-			box-shadow: var(--shadow);
-			padding: 30px;
-			position: relative;
-			overflow: hidden;
-		}
-
-		.card::after {
-			content: "";
-			position: absolute;
-			inset: 0;
-			background: linear-gradient(120deg, rgba(20, 123, 209, 0.08), rgba(70, 180, 232, 0.08));
-			pointer-events: none;
-		}
-
-		.header {
-			display: flex;
-			align-items: center;
-			gap: 12px;
-			margin-bottom: 16px;
-		}
-
-		.dot {
-			width: 12px;
-			height: 12px;
-			border-radius: 50%%;
-			background: var(--ok);
-			box-shadow: 0 0 0 0 rgba(15, 143, 103, 0.55);
-			animation: pulse 1.6s infinite;
-		}
-
-		@keyframes pulse {
-			0%% { box-shadow: 0 0 0 0 rgba(15, 143, 103, 0.55); }
-			70%% { box-shadow: 0 0 0 12px rgba(15, 143, 103, 0); }
-			100%% { box-shadow: 0 0 0 0 rgba(15, 143, 103, 0); }
-		}
-
-		h1 {
-			margin: 0;
-			font-size: clamp(1.35rem, 2.5vw, 1.8rem);
-			letter-spacing: 0.01em;
-		}
-
-		p {
-			margin: 10px 0;
-			color: var(--muted);
-			line-height: 1.5;
-		}
-
-		.stats {
-			margin-top: 22px;
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			gap: 12px;
-		}
-
-		.stat {
-			background: #e9f3fb;
-			border: 1px solid #d3e4f5;
-			border-radius: 12px;
-			padding: 14px;
-		}
-
-		.stat-label {
-			font-size: 0.86rem;
-			color: #4c6274;
-			margin-bottom: 6px;
-		}
-
-		.stat-value {
-			font-size: 1.4rem;
-			color: var(--text);
-			font-weight: 700;
-			font-variant-numeric: tabular-nums;
-		}
-
-		.progress {
-			margin-top: 18px;
-			width: 100%%;
-			height: 12px;
-			background: #d6e6f4;
-			border-radius: 999px;
-			overflow: hidden;
-		}
-
-		.progress-bar {
-			width: 0%%;
-			height: 100%%;
-			background: linear-gradient(90deg, var(--accent), var(--accent-2));
-			transition: width 0.8s ease;
-		}
-
-		.tiny {
-			margin-top: 12px;
-			font-size: 0.85rem;
-			color: #597387;
-		}
-
-		@media (max-width: 620px) {
-			.card { padding: 20px; }
-			.stats { grid-template-columns: 1fr; }
-		}
-	</style>
+	<link rel="stylesheet" href="`+statusCSSRoute+`">
 </head>
 <body>
 	<main class="card">
@@ -222,34 +212,16 @@ drained:
 		</div>
 
 		<p>Die Anwendung in Gruppe <strong>%s</strong> wird gerade hochgefahren und ist in Kuerze verfuegbar.</p>
-
-		<section class="stats" aria-live="polite">
-			<article class="stat">
-				<div class="stat-label">Geschaetzte Startdauer</div>
-				<div class="stat-value"><span id="estimated">%d</span> s</div>
-			</article>
-			<article class="stat">
-				<div class="stat-label">Voraussichtlich verbleibend</div>
-				<div class="stat-value"><span id="remaining">%d</span> s</div>
-			</article>
-		</section>
-
-		<div class="progress" role="progressbar" aria-label="Startfortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-			<div class="progress-bar" id="progress"></div>
-		</div>
-		<p class="tiny">Die Anzeige aktualisiert sich live. Falls der Dienst bereits laeuft, bitte Seite neu laden.</p>
+		<div class="countdown" aria-live="polite"><span id="remaining">%d</span> s</div>
+		<p class="countdown-label">Verbleibend bis zum automatischen Reload</p>
 	</main>
 
 	<script>
 		(function () {
-			const estimated = Math.max(1, Number(%d));
 			let remaining = Math.max(0, Number(%d));
 			let reloading = false;
 
-			const estimatedEl = document.getElementById("estimated");
 			const remainingEl = document.getElementById("remaining");
-			const progressEl = document.getElementById("progress");
-			const progressWrap = document.querySelector(".progress");
 
 			function reloadNow() {
 				if (reloading) {
@@ -260,12 +232,7 @@ drained:
 			}
 
 			function render() {
-				estimatedEl.textContent = String(estimated);
 				remainingEl.textContent = String(remaining);
-
-				const done = Math.max(0, Math.min(100, ((estimated - remaining) / estimated) * 100));
-				progressEl.style.width = done.toFixed(1) + "%%";
-				progressWrap.setAttribute("aria-valuenow", String(Math.round(done)));
 			}
 
 			render();
@@ -286,7 +253,7 @@ drained:
 		})();
 	</script>
 </body>
-</html>`, sp.groupName, estimated, remaining, estimated, remaining)
+	</html>`, sp.groupName, remaining, remaining)
 	})
 
 	startedListener := 0
@@ -299,7 +266,7 @@ drained:
 		}
 
 		srv := &http.Server{
-			Handler:           handler,
+			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 
@@ -386,7 +353,7 @@ func (sp *startupStatusPage) RecordStartupDuration(d time.Duration) {
 	sp.wakeRequestedAt = time.Time{}
 }
 
-func (sp *startupStatusPage) startupTiming() (remainingSeconds int, estimatedSeconds int) {
+func (sp *startupStatusPage) startupTiming() int {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
@@ -404,14 +371,10 @@ func (sp *startupStatusPage) startupTiming() (remainingSeconds int, estimatedSec
 		}
 	}
 
-	estimatedSeconds = int(math.Ceil(estimate.Seconds()))
-	remainingSeconds = int(math.Ceil(remaining.Seconds()))
-	if estimatedSeconds < 1 {
-		estimatedSeconds = 1
-	}
+	remainingSeconds := int(remaining.Seconds() + 0.999)
 	if remainingSeconds < 0 {
 		remainingSeconds = 0
 	}
 
-	return remainingSeconds, estimatedSeconds
+	return remainingSeconds
 }
