@@ -1,0 +1,172 @@
+{
+  "quizzes": [
+    {
+      "id": 1,
+      "quote": "Ich arbeite ja schon!",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 2,
+      "quote": "Arbeit, Arbeit.",
+      "game": "Warcraft",
+      "options": ["Warcraft", "Gothic 1 & 2", "Stronghold", "Diablo"],
+      "correctIndex": 0
+    },
+    {
+      "id": 3,
+      "quote": "Wololo!",
+      "game": "Age of Empires",
+      "options": ["Age of Empires", "Warcraft", "Stronghold", "Gothic 1 & 2"],
+      "correctIndex": 0
+    },
+    {
+      "id": 4,
+      "quote": "Wir brauchen mehr Holz.",
+      "game": "Stronghold",
+      "options": ["Stronghold", "Gothic 1 & 2", "Warcraft", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 5,
+      "quote": "Was willst du denn?",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 6,
+      "quote": "Die Arbeit ist getan.",
+      "game": "Stronghold",
+      "options": ["Stronghold", "Warcraft", "Gothic 1 & 2", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 7,
+      "quote": "Was gibt's?",
+      "game": "Warcraft",
+      "options": ["Warcraft", "Gothic 1 & 2", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 8,
+      "quote": "Lass mich in Ruhe!",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 9,
+      "quote": "Euer Volk liebt Euch, Sire.",
+      "game": "Stronghold",
+      "options": ["Stronghold", "Gothic 1 & 2", "Warcraft", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 10,
+      "quote": "Die Vorräte gehen zur Neige.",
+      "game": "Stronghold",
+      "options": ["Stronghold", "Warcraft", "Gothic 1 & 2", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 11,
+      "quote": "Die Männer sind bereit, Sire.",
+      "game": "Stronghold",
+      "options": ["Stronghold", "Gothic 1 & 2", "Warcraft", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 12,
+      "quote": "Ja?",
+      "game": "Age of Empires",
+      "options": ["Age of Empires", "Warcraft", "Stronghold", "Gothic 1 & 2"],
+      "correctIndex": 0
+    },
+    {
+      "id": 13,
+      "quote": "Fertig.",
+      "game": "Warcraft",
+      "options": ["Warcraft", "Gothic 1 & 2", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 14,
+      "quote": "Zug um Zug.",
+      "game": "Warcraft",
+      "options": ["Warcraft", "Gothic 1 & 2", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 15,
+      "quote": "Ich bin bereit.",
+      "game": "Warcraft",
+      "options": ["Warcraft", "Gothic 1 & 2", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 16,
+      "quote": "Noch nicht fertig!",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 17,
+      "quote": "Ich hab keine Zeit!",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 18,
+      "quote": "Verschwinde!",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 19,
+      "quote": "Du nervst!",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 20,
+      "quote": "Nicht jetzt!",
+      "game": "Gothic 1 & 2",
+      "options": ["Gothic 1 & 2", "Warcraft", "Stronghold", "Age of Empires"],
+      "correctIndex": 0
+    },
+    {
+      "id": 21,
+      "quote": "Roggan?",
+      "game": "Age of Empires",
+      "options": ["Age of Empires", "Warcraft", "Gothic 1 & 2", "Stronghold"],
+      "correctIndex": 0
+    },
+    {
+      "id": 22,
+      "quote": "Bleib eine Weile und hör zu.",
+      "game": "Diablo 1 & 2",
+      "options": ["Diablo 1 & 2", "Warcraft", "Gothic 1 & 2", "Stronghold"],
+      "correctIndex": 0
+    },
+    {
+      "id": 23,
+      "quote": "Nicht einmal der Tod kann dich retten.",
+      "game": "Diablo 1 & 2",
+      "options": ["Diablo 1 & 2", "Gothic 1 & 2", "Warcraft", "Stronghold"],
+      "correctIndex": 0
+    },
+    {
+      "id": 24,
+      "quote": "Das Böse ist stark hier.",
+      "game": "Diablo 1 & 2",
+      "options": ["Diablo 1 & 2", "Warcraft", "Stronghold", "Gothic 1 & 2"],
+      "correctIndex": 0
+    }
+  ]
+}

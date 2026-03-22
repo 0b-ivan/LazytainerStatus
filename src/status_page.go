@@ -18,7 +18,49 @@ const (
 	defaultStatusCSSPath = "/app/status_page.css"
 	statusCSSRoute       = "/_lazytainer/status-page.css"
 	defaultEstimatePath  = "/tmp/lazytainer_startup_estimates.json"
+	defaultQuizzesPath   = "/app/game_quotes.json"
+	defaultQuizScorePath = "/tmp/lazytainer_quiz_scores.json"
 )
+
+type quizOption struct {
+	Text string `json:"text"`
+}
+
+type quizQuestion struct {
+	ID           int      `json:"id"`
+	Quote        string   `json:"quote"`
+	Game         string   `json:"game"`
+	Options      []string `json:"options"`
+	CorrectIndex int      `json:"correctIndex"`
+}
+
+type quizzesData struct {
+	Quizzes []quizQuestion `json:"quizzes"`
+}
+
+type quizSessionState struct {
+	QuestionIndex int
+	Score         int
+	TotalAnswered int
+}
+
+var quizDataStore = struct {
+	mu       sync.Mutex
+	loaded   bool
+	questions []quizQuestion
+}{
+	questions: []quizQuestion{},
+}
+
+var quizScoreStore = struct {
+	mu     sync.Mutex
+	loaded bool
+	path   string
+	values map[string]quizSessionState
+}{
+	path:   defaultQuizScorePath,
+	values: map[string]quizSessionState{},
+}
 
 type startupEstimateRecord struct {
 	EstimateSeconds     int64  `json:"estimateSeconds"`
@@ -166,6 +208,103 @@ func saveStartupEstimate(groupName string, estimate time.Duration, lastDuration 
 	if err := os.WriteFile(startupEstimateStore.path, raw, 0o644); err != nil {
 		return
 	}
+}
+
+func loadQuizzesLocked() {
+	if quizDataStore.loaded {
+		return
+	}
+
+	quizDataStore.loaded = true
+
+	path := os.Getenv("GAME_QUOTES_FILE")
+	if path == "" {
+		path = defaultQuizzesPath
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		debugLogger.Printf("quiz: could not read quizzes file %s: %v\n", path, err)
+		return
+	}
+
+	var data quizzesData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		debugLogger.Printf("quiz: could not parse quizzes JSON: %v\n", err)
+		return
+	}
+
+	quizDataStore.questions = data.Quizzes
+}
+
+func getRandomQuiz() *quizQuestion {
+	quizDataStore.mu.Lock()
+	defer quizDataStore.mu.Unlock()
+
+	loadQuizzesLocked()
+
+	if len(quizDataStore.questions) == 0 {
+		return nil
+	}
+
+	idx := time.Now().UnixNano() % int64(len(quizDataStore.questions))
+	return &quizDataStore.questions[idx]
+}
+
+func loadQuizScoresLocked() {
+	if quizScoreStore.loaded {
+		return
+	}
+
+	quizScoreStore.loaded = true
+	quizScoreStore.path = os.Getenv("QUIZ_SCORE_FILE")
+	if quizScoreStore.path == "" {
+		quizScoreStore.path = defaultQuizScorePath
+	}
+
+	raw, err := os.ReadFile(quizScoreStore.path)
+	if err != nil {
+		return
+	}
+
+	var scores map[string]quizSessionState
+	if err := json.Unmarshal(raw, &scores); err != nil {
+		return
+	}
+
+	quizScoreStore.values = scores
+}
+
+func saveQuizScore(sessionID string, state quizSessionState) {
+	quizScoreStore.mu.Lock()
+	defer quizScoreStore.mu.Unlock()
+
+	loadQuizScoresLocked()
+
+	quizScoreStore.values[sessionID] = state
+
+	raw, err := json.Marshal(quizScoreStore.values)
+	if err != nil {
+		return
+	}
+
+	if err := os.WriteFile(quizScoreStore.path, raw, 0o644); err != nil {
+		return
+	}
+}
+
+func getQuizScore(sessionID string) quizSessionState {
+	quizScoreStore.mu.Lock()
+	defer quizScoreStore.mu.Unlock()
+
+	loadQuizScoresLocked()
+
+	state, exists := quizScoreStore.values[sessionID]
+	if !exists {
+		return quizSessionState{QuestionIndex: 0, Score: 0, TotalAnswered: 0}
+	}
+
+	return state
 }
 
 func cssPathFromEnv() string {
@@ -393,6 +532,15 @@ drained:
 		w.Header().Set("X-Lazytainer-Status", "starting")
 		w.Header().Set("X-Lazytainer-Wait-Seconds", strconv.Itoa(max(1, remaining)))
 		w.WriteHeader(http.StatusServiceUnavailable)
+		
+		// Session ID via cookie
+		sessionID := fmt.Sprintf("%s_%d", sp.groupName, time.Now().Unix())
+		http.SetCookie(w, &http.Cookie{
+			Name:  "quiz_session",
+			Value: sessionID,
+			Path:  "/",
+		})
+
 		_, _ = fmt.Fprintf(w, `<!doctype html>
 <html lang="de">
 <head>
@@ -400,45 +548,161 @@ drained:
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Container wird gestartet</title>
 	<link rel="stylesheet" href="`+statusCSSRoute+`">
+	<style>
+		.container { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px; }
+		.section { flex: 1; min-width: 280px; }
+		.quiz-card { background: #f9fafb; border-radius: 12px; padding: 16px; margin-top: 12px; }
+		.quiz-question { font-weight: 600; color: #102131; margin-bottom: 12px; }
+		.quiz-options { display: flex; flex-direction: column; gap: 8px; }
+		.quiz-option { display: flex; align-items: center; gap: 8px; }
+		.quiz-option input[type="radio"] { cursor: pointer; }
+		.quiz-option label { cursor: pointer; flex: 1; }
+		.btn-next { margin-top: 12px; padding: 8px 16px; background: #0f8f67; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+		.btn-next:hover { background: #0d7a57; }
+		.quiz-feedback { margin-top: 12px; padding: 10px; border-radius: 6px; font-size: 0.9rem; }
+		.feedback-correct { background: #d4edda; color: #155724; }
+		.feedback-incorrect { background: #f8d7da; color: #721c24; }
+		.scoreboard { background: #ffffff; border: 1px solid #e0e7ff; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+		.score-line { display: flex; justify-content: space-between; font-size: 0.9rem; color: #4d6274; }
+		.score-value { font-weight: 600; color: #0f8f67; }
+	</style>
 </head>
 <body>
-	<main class="card">
-		<div class="header">
-			<span class="dot" aria-hidden="true"></span>
-			<h1>Container startet gerade</h1>
+	<div class="scoreboard">
+		<div class="score-line">
+			<span>Punkte:</span>
+			<span class="score-value" id="score-display">0/0</span>
+		</div>
+	</div>
+
+	<div class="container">
+		<div class="section">
+			<div class="card">
+				<div class="header">
+					<span class="dot" aria-hidden="true"></span>
+					<h1>Container startet</h1>
+				</div>
+				<p>Die Anwendung in Gruppe <strong>%s</strong> wird hochgefahren.</p>
+				<p class="last-startup">%s</p>
+				<div class="countdown" aria-live="polite"><span id="remaining">%d</span> s</div>
+				<p class="countdown-label">Verbleibend bis zum Reload</p>
+			</div>
 		</div>
 
-		<p>Die Anwendung in Gruppe <strong>%s</strong> wird gerade hochgefahren und ist in Kuerze verfuegbar.</p>
-		<p class="last-startup">%s</p>
-		<div class="countdown" aria-live="polite"><span id="remaining">%d</span> s</div>
-		<p class="countdown-label">Verbleibend bis zum automatischen Reload</p>
-	</main>
+		<div class="section">
+			<div class="card">
+				<h2 style="margin: 0 0 16px 0; font-size: 1.1rem;">🎮 Spiele-Quiz</h2>
+				<div id="quiz-container" class="quiz-card"></div>
+			</div>
+		</div>
+	</div>
 
 	<script>
-		(function () {
-			let remaining = Math.max(0, Number(%d));
-			let reloading = false;
+		const SESSION_ID = '%s';
+		let currentQuestion = null;
+		let score = 0;
+		let totalAnswered = 0;
+		let answered = false;
 
-			const remainingEl = document.getElementById("remaining");
-
-			function reloadNow() {
-				if (reloading) {
-					return;
-				}
-				reloading = true;
-				window.location.reload();
+		async function loadQuiz() {
+			try {
+				const res = await fetch('/api/quiz?session=' + encodeURIComponent(SESSION_ID));
+				const data = await res.json();
+				currentQuestion = data.question;
+				score = data.score;
+				totalAnswered = data.totalAnswered;
+				renderQuiz();
+				updateScoreboard();
+			} catch (e) {
+				console.error('Quiz load error:', e);
+				document.getElementById('quiz-container').innerHTML = '<p style="color: #d32f2f;">Quiz konnte nicht geladen werden.</p>';
 			}
+		}
 
-			function render() {
-				remainingEl.textContent = String(remaining);
-			}
-
-			render();
-			if (remaining === 0) {
-				reloadNow();
+		function renderQuiz() {
+			if (!currentQuestion) {
+				document.getElementById('quiz-container').innerHTML = '<p>Keine Fragen verfügbar.</p>';
 				return;
 			}
 
+			const container = document.getElementById('quiz-container');
+			const optionsHTML = currentQuestion.options.map((opt, i) => 
+				'<div class="quiz-option"><input type="radio" id="opt' + i + '" name="answer" value="' + i + '" ' + (answered ? 'disabled' : '') + '><label for="opt' + i + '">' + opt + '</label></div>'
+			).join('');
+
+			container.innerHTML = 
+				'<div class="quiz-question">Zitat: "' + currentQuestion.quote + '"</div>' +
+				'<div class="quiz-options">' + optionsHTML + '</div>' +
+				'<button class="btn-next" onclick="submitAnswer()" ' + (answered ? 'style="display:none"' : '') + '>Antwort senden</button>' +
+				'<div id="feedback"></div>';
+		}
+
+		function updateScoreboard() {
+			document.getElementById('score-display').textContent = score + '/' + totalAnswered;
+		}
+
+		async function submitAnswer() {
+			const selected = document.querySelector('input[name="answer"]:checked');
+			if (!selected) return;
+
+			answered = true;
+			const answerIndex = parseInt(selected.value, 10);
+
+			try {
+				const res = await fetch('/api/quiz/answer', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						session: SESSION_ID,
+						answerIndex: answerIndex,
+						questionId: currentQuestion.id
+					})
+				});
+
+				const data = await res.json();
+				const feedback = document.getElementById('feedback');
+				
+				if (data.correct) {
+					feedback.className = 'quiz-feedback feedback-correct';
+					feedback.textContent = '✓ Richtig! ' + (data.message || '');
+					score = data.score;
+				} else {
+					feedback.className = 'quiz-feedback feedback-incorrect';
+					feedback.textContent = '✗ Falsch! Die Antwort ist: ' + currentQuestion.options[currentQuestion.correctIndex];
+				}
+
+				totalAnswered = data.totalAnswered;
+				updateScoreboard();
+
+				setTimeout(() => {
+					answered = false;
+					loadQuiz();
+				}, 2000);
+			} catch (e) {
+				console.error('Submit error:', e);
+			}
+		}
+
+		// Countdown timer
+		let remaining = Math.max(0, Number(%d));
+		let reloading = false;
+
+		const remainingEl = document.getElementById("remaining");
+
+		function reloadNow() {
+			if (reloading) return;
+			reloading = true;
+			window.location.reload();
+		}
+
+		function render() {
+			remainingEl.textContent = String(remaining);
+		}
+
+		render();
+		if (remaining === 0) {
+			reloadNow();
+		} else {
 			setInterval(function () {
 				if (remaining > 0) {
 					remaining -= 1;
@@ -448,10 +712,89 @@ drained:
 					}
 				}
 			}, 1000);
-		})();
+		}
+
+		// Load quiz on page load
+		loadQuiz();
 	</script>
 </body>
-	</html>`, sp.groupName, lastStartupSummary, remaining, remaining)
+</html>`, sp.groupName, lastStartupSummary, remaining, sessionID, remaining)
+	})
+
+	// Quiz API: Get next question
+	mux.HandleFunc("/api/quiz", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.URL.Query().Get("session")
+		if sessionID == "" {
+			http.Error(w, "Missing session", http.StatusBadRequest)
+			return
+		}
+
+		state := getQuizScore(sessionID)
+		question := getRandomQuiz()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+
+		response := map[string]any{
+			"question":     question,
+			"score":        state.Score,
+			"totalAnswered": state.TotalAnswered,
+		}
+		_ = json.NewEncoder(w).Encode(response)
+	})
+
+	// Quiz API: Submit answer
+	mux.HandleFunc("/api/quiz/answer", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		type answerRequest struct {
+			Session      string `json:"session"`
+			AnswerIndex  int    `json:"answerIndex"`
+			QuestionID   int    `json:"questionId"`
+		}
+
+		var req answerRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+
+		state := getQuizScore(req.Session)
+		state.TotalAnswered++
+
+		// Find question by ID
+		var question *quizQuestion
+		quizDataStore.mu.Lock()
+		loadQuizzesLocked()
+		for i := range quizDataStore.questions {
+			if quizDataStore.questions[i].ID == req.QuestionID {
+				question = &quizDataStore.questions[i]
+				break
+			}
+		}
+		quizDataStore.mu.Unlock()
+
+		correct := false
+		if question != nil && req.AnswerIndex == question.CorrectIndex {
+			correct = true
+			state.Score++
+		}
+
+		saveQuizScore(req.Session, state)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+
+		response := map[string]any{
+			"correct":       correct,
+			"score":         state.Score,
+			"totalAnswered": state.TotalAnswered,
+			"message":       "",
+		}
+		_ = json.NewEncoder(w).Encode(response)
 	})
 
 	startedListener := 0
