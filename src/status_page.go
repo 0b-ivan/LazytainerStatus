@@ -631,6 +631,7 @@ drained:
 
 		lastStartupSummary := sp.lastStartupSummary()
 		visitorInfo := visitorInfoText(sp.groupName)
+		inlineCSS := sp.getStatusCSS()
 		quizSectionStyle := ""
 		quizInfoText := "Der Container waermt sich gerade auf. Solange kannst du mit Gaming-Zitaten ein paar Punkte farmen."
 		countdownLabel := "Verbleibend bis zum Reload"
@@ -665,7 +666,7 @@ drained:
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Container wird gestartet</title>
-	<link rel="stylesheet" href="`+statusCSSRoute+`">
+	<style>%s</style>
 	<style>
 		.container { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px; }
 		.section { flex: 1; min-width: 280px; }
@@ -724,7 +725,7 @@ drained:
 	<script>
 		const MINIGAME_ENABLED = %t;
 		const DEBUG_MODE = %t;
-		const QUIZ_API_BASE = '` + statusAPIBaseRoute + `';
+		const QUIZ_API_BASE = '`+statusAPIBaseRoute+`';
 		const SESSION_ID = '%s';
 		let currentQuestion = null;
 		let score = 0;
@@ -796,18 +797,17 @@ drained:
 			}
 
 			try {
-				let res = await fetch(QUIZ_API_BASE + '/quiz/answer', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						session: SESSION_ID,
-						answerIndex: answerIndex,
-						questionId: currentQuestion.id
-					})
-				});
+				let res = await fetch(
+					QUIZ_API_BASE + '/quiz/answer?session=' + encodeURIComponent(SESSION_ID)
+						+ '&answerIndex=' + encodeURIComponent(String(answerIndex))
+						+ '&questionId=' + encodeURIComponent(String(currentQuestion.id)),
+					{
+						headers: { 'Accept': 'application/json' }
+					}
+				);
 
-				// Fallback for environments that normalize paths differently.
-				if (res.status === 404 || res.status === 405) {
+				// Fallback on POST if GET is unavailable.
+				if (res.status === 404 || res.status === 405 || res.status === 501) {
 					res = await fetch('/api/quiz/answer', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
@@ -900,7 +900,7 @@ drained:
 		}
 	</script>
 </body>
-</html>`, debugInfoText, quizInfoText, visitorInfo, sp.groupName, lastStartupSummary, remaining, countdownLabel, quizSectionStyle, sp.quizEnabled, sp.debugMode, sessionID, remaining)
+</html>`, inlineCSS, debugInfoText, quizInfoText, visitorInfo, sp.groupName, lastStartupSummary, remaining, countdownLabel, quizSectionStyle, sp.quizEnabled, sp.debugMode, sessionID, remaining)
 	})
 
 	// Quiz API: Get next question
@@ -946,7 +946,7 @@ drained:
 			return
 		}
 
-		if r.Method != http.MethodPost {
+		if r.Method != http.MethodPost && r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -958,7 +958,18 @@ drained:
 		}
 
 		var req answerRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if r.Method == http.MethodGet {
+			req.Session = r.URL.Query().Get("session")
+			req.AnswerIndex, _ = strconv.Atoi(r.URL.Query().Get("answerIndex"))
+			req.QuestionID, _ = strconv.Atoi(r.URL.Query().Get("questionId"))
+		} else {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+		}
+
+		if req.Session == "" || req.QuestionID <= 0 {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
