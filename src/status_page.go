@@ -244,11 +244,20 @@ drained:
 		(function () {
 			const estimated = Math.max(1, Number(%d));
 			let remaining = Math.max(0, Number(%d));
+			let reloading = false;
 
 			const estimatedEl = document.getElementById("estimated");
 			const remainingEl = document.getElementById("remaining");
 			const progressEl = document.getElementById("progress");
 			const progressWrap = document.querySelector(".progress");
+
+			function reloadNow() {
+				if (reloading) {
+					return;
+				}
+				reloading = true;
+				window.location.reload();
+			}
 
 			function render() {
 				estimatedEl.textContent = String(estimated);
@@ -260,10 +269,18 @@ drained:
 			}
 
 			render();
+			if (remaining === 0) {
+				reloadNow();
+				return;
+			}
+
 			setInterval(function () {
 				if (remaining > 0) {
 					remaining -= 1;
 					render();
+					if (remaining === 0) {
+						reloadNow();
+					}
 				}
 			}, 1000);
 		})();
