@@ -45,8 +45,8 @@ type quizSessionState struct {
 }
 
 var quizDataStore = struct {
-	mu       sync.Mutex
-	loaded   bool
+	mu        sync.Mutex
+	loaded    bool
 	questions []quizQuestion
 }{
 	questions: []quizQuestion{},
@@ -532,7 +532,7 @@ drained:
 		w.Header().Set("X-Lazytainer-Status", "starting")
 		w.Header().Set("X-Lazytainer-Wait-Seconds", strconv.Itoa(max(1, remaining)))
 		w.WriteHeader(http.StatusServiceUnavailable)
-		
+
 		// Session ID via cookie
 		sessionID := fmt.Sprintf("%s_%d", sp.groupName, time.Now().Unix())
 		http.SetCookie(w, &http.Cookie{
@@ -565,6 +565,8 @@ drained:
 		.scoreboard { background: #ffffff; border: 1px solid #e0e7ff; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
 		.score-line { display: flex; justify-content: space-between; font-size: 0.9rem; color: #4d6274; }
 		.score-value { font-weight: 600; color: #0f8f67; }
+		.score-info { margin-top: 8px; font-size: 0.88rem; color: #5b6f81; line-height: 1.4; }
+		.quiz-hint { margin-top: 10px; font-size: 0.88rem; color: #8a5b00; }
 	</style>
 </head>
 <body>
@@ -573,6 +575,8 @@ drained:
 			<span>Punkte:</span>
 			<span class="score-value" id="score-display">0/0</span>
 		</div>
+		<p class="score-info">Scoreboard: Die erste Zahl sind richtige Antworten, die zweite Zahl alle beantworteten Fragen.</p>
+		<p class="score-info">Diese Seite zeigt die Restzeit bis zum Start. Das Quiz verkuerzt die Wartezeit mit kleinen Gaming-Zitaten.</p>
 	</div>
 
 	<div class="container">
@@ -580,9 +584,9 @@ drained:
 			<div class="card">
 				<div class="header">
 					<span class="dot" aria-hidden="true"></span>
-					<h1>Container startet</h1>
+					<h1>Container startet gerade</h1>
 				</div>
-				<p>Die Anwendung in Gruppe <strong>%s</strong> wird hochgefahren.</p>
+				<p>Container der Gruppe <strong>%s</strong> wird gerade gestartet und ist in Kuerze erreichbar.</p>
 				<p class="last-startup">%s</p>
 				<div class="countdown" aria-live="polite"><span id="remaining">%d</span> s</div>
 				<p class="countdown-label">Verbleibend bis zum Reload</p>
@@ -633,7 +637,9 @@ drained:
 			container.innerHTML = 
 				'<div class="quiz-question">Zitat: "' + currentQuestion.quote + '"</div>' +
 				'<div class="quiz-options">' + optionsHTML + '</div>' +
-				'<button class="btn-next" onclick="submitAnswer()" ' + (answered ? 'style="display:none"' : '') + '>Antwort senden</button>' +
+				'<button id="submit-btn" class="btn-next" onclick="submitAnswer()" ' + (answered ? 'style="display:none"' : '') + '>Antwort senden</button>' +
+				'<button id="next-btn" class="btn-next" onclick="nextQuestion()" style="display:none; margin-left: 8px;">Weiter</button>' +
+				'<div id="quiz-hint" class="quiz-hint"></div>' +
 				'<div id="feedback"></div>';
 		}
 
@@ -642,11 +648,27 @@ drained:
 		}
 
 		async function submitAnswer() {
+			if (answered) return;
+
 			const selected = document.querySelector('input[name="answer"]:checked');
-			if (!selected) return;
+			const hintEl = document.getElementById('quiz-hint');
+			if (!selected) {
+				if (hintEl) {
+					hintEl.textContent = 'Bitte waehle erst eine Antwort aus.';
+				}
+				return;
+			}
+			if (hintEl) {
+				hintEl.textContent = '';
+			}
 
 			answered = true;
 			const answerIndex = parseInt(selected.value, 10);
+			const submitBtn = document.getElementById('submit-btn');
+			if (submitBtn) {
+				submitBtn.setAttribute('disabled', 'disabled');
+				submitBtn.textContent = 'Pruefe...';
+			}
 
 			try {
 				const res = await fetch('/api/quiz/answer', {
@@ -659,8 +681,13 @@ drained:
 					})
 				});
 
+				if (!res.ok) {
+					throw new Error('Antwort konnte nicht gesendet werden (' + res.status + ')');
+				}
+
 				const data = await res.json();
 				const feedback = document.getElementById('feedback');
+				const nextBtn = document.getElementById('next-btn');
 				
 				if (data.correct) {
 					feedback.className = 'quiz-feedback feedback-correct';
@@ -673,14 +700,27 @@ drained:
 
 				totalAnswered = data.totalAnswered;
 				updateScoreboard();
-
-				setTimeout(() => {
-					answered = false;
-					loadQuiz();
-				}, 2000);
+				if (nextBtn) {
+					nextBtn.style.display = 'inline-block';
+				}
 			} catch (e) {
 				console.error('Submit error:', e);
+				const feedback = document.getElementById('feedback');
+				if (feedback) {
+					feedback.className = 'quiz-feedback feedback-incorrect';
+					feedback.textContent = 'Antwort konnte nicht gesendet werden. Bitte erneut versuchen.';
+				}
+				answered = false;
+				if (submitBtn) {
+					submitBtn.removeAttribute('disabled');
+					submitBtn.textContent = 'Antwort senden';
+				}
 			}
+		}
+
+		function nextQuestion() {
+			answered = false;
+			loadQuiz();
 		}
 
 		// Countdown timer
@@ -736,8 +776,8 @@ drained:
 		w.Header().Set("Cache-Control", "no-store")
 
 		response := map[string]any{
-			"question":     question,
-			"score":        state.Score,
+			"question":      question,
+			"score":         state.Score,
 			"totalAnswered": state.TotalAnswered,
 		}
 		_ = json.NewEncoder(w).Encode(response)
@@ -751,9 +791,9 @@ drained:
 		}
 
 		type answerRequest struct {
-			Session      string `json:"session"`
-			AnswerIndex  int    `json:"answerIndex"`
-			QuestionID   int    `json:"questionId"`
+			Session     string `json:"session"`
+			AnswerIndex int    `json:"answerIndex"`
+			QuestionID  int    `json:"questionId"`
 		}
 
 		var req answerRequest
