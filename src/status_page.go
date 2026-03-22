@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -15,7 +16,18 @@ import (
 const (
 	defaultStatusCSSPath = "/app/status_page.css"
 	statusCSSRoute       = "/_lazytainer/status-page.css"
+	defaultEstimatePath  = "/tmp/lazytainer_startup_estimates.json"
 )
+
+var startupEstimateStore = struct {
+	mu     sync.Mutex
+	loaded bool
+	path   string
+	values map[string]int64
+}{
+	path:   defaultEstimatePath,
+	values: map[string]int64{},
+}
 
 type startupStatusPage struct {
 	groupName string
@@ -38,12 +50,75 @@ func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate t
 		configuredEstimate = 30 * time.Second
 	}
 
+	storedEstimate := getStoredStartupEstimate(groupName)
+
 	return &startupStatusPage{
 		groupName:          groupName,
 		ports:              ports,
 		wakeCh:             make(chan struct{}, 1),
 		configuredEstimate: configuredEstimate,
+		observedEstimate:   storedEstimate,
 		cssPath:            cssPathFromEnv(),
+	}
+}
+
+func estimatePathFromEnv() string {
+	path := os.Getenv("STARTUP_ESTIMATE_FILE")
+	if path == "" {
+		return defaultEstimatePath
+	}
+
+	return path
+}
+
+func loadStartupEstimatesLocked() {
+	if startupEstimateStore.loaded {
+		return
+	}
+
+	startupEstimateStore.path = estimatePathFromEnv()
+	startupEstimateStore.loaded = true
+
+	raw, err := os.ReadFile(startupEstimateStore.path)
+	if err != nil {
+		return
+	}
+
+	var loaded map[string]int64
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		return
+	}
+
+	startupEstimateStore.values = loaded
+}
+
+func getStoredStartupEstimate(groupName string) time.Duration {
+	startupEstimateStore.mu.Lock()
+	defer startupEstimateStore.mu.Unlock()
+
+	loadStartupEstimatesLocked()
+	seconds, exists := startupEstimateStore.values[groupName]
+	if !exists || seconds <= 0 {
+		return 0
+	}
+
+	return time.Duration(seconds) * time.Second
+}
+
+func saveStartupEstimate(groupName string, d time.Duration) {
+	startupEstimateStore.mu.Lock()
+	defer startupEstimateStore.mu.Unlock()
+
+	loadStartupEstimatesLocked()
+	startupEstimateStore.values[groupName] = int64(d.Round(time.Second) / time.Second)
+
+	raw, err := json.Marshal(startupEstimateStore.values)
+	if err != nil {
+		return
+	}
+
+	if err := os.WriteFile(startupEstimateStore.path, raw, 0o644); err != nil {
+		return
 	}
 }
 
@@ -341,6 +416,13 @@ func (sp *startupStatusPage) RecordStartupDuration(d time.Duration) {
 		return
 	}
 
+	if d < 3*time.Second {
+		d = 3 * time.Second
+	}
+	if d > 15*time.Minute {
+		d = 15 * time.Minute
+	}
+
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
@@ -351,6 +433,7 @@ func (sp *startupStatusPage) RecordStartupDuration(d time.Duration) {
 		sp.observedEstimate = (sp.observedEstimate*3 + d) / 4
 	}
 	sp.wakeRequestedAt = time.Time{}
+	saveStartupEstimate(sp.groupName, sp.observedEstimate)
 }
 
 func (sp *startupStatusPage) startupTiming() int {

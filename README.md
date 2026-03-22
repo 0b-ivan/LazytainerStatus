@@ -83,7 +83,7 @@ Group properties that can be changed include:
 | sleepMethod         | How to put the container to sleep. Can be `stop` or `pause`                                                                                                                                        | No       | `stop`  |
 | netInterface        | Network interface to listen on                                                                                                                                                                     | No       | `eth0`  |
 | statusPage          | If true, Lazytainer serves a temporary HTTP status page on the group's configured ports while the group is stopped and wake-up is in progress. Only useful for HTTP/TCP services and `sleepMethod=stop` | No       | false   |
-| startupEstimate     | Initial countdown duration in seconds for the status page. Lazytainer also refines this value over time using observed startup durations.                                                       | No       | 30      |
+| startupEstimate     | Initial countdown seed in seconds for the status page. Lazytainer then dynamically learns real startup durations per group and uses those values for future wake-ups.                         | No       | 30      |
 
 ### Additional Configuration
 
@@ -135,6 +135,15 @@ lazytainer:
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock:ro
     - ./status_page.css:/custom/status_page.css:ro
+```
+
+Lazytainer stores learned startup durations in `/tmp/lazytainer_startup_estimates.json` so countdowns stay dynamic across restarts. You can override the path with:
+
+```yaml
+lazytainer:
+  # ... configuration omitted for brevity
+  environment:
+    - STARTUP_ESTIMATE_FILE=/data/lazytainer_startup_estimates.json
 ```
 
 Ready-made themes are available in `examples/status-page-themes/`:
