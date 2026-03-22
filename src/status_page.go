@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -20,13 +21,22 @@ type startupStatusPage struct {
 	listeners map[uint16]net.Listener
 	running   bool
 	wakeCh    chan struct{}
+
+	configuredEstimate time.Duration
+	observedEstimate   time.Duration
+	wakeRequestedAt    time.Time
 }
 
-func newStartupStatusPage(groupName string, ports []uint16) *startupStatusPage {
+func newStartupStatusPage(groupName string, ports []uint16, configuredEstimate time.Duration) *startupStatusPage {
+	if configuredEstimate <= 0 {
+		configuredEstimate = 30 * time.Second
+	}
+
 	return &startupStatusPage{
-		groupName: groupName,
-		ports:     ports,
-		wakeCh:    make(chan struct{}, 1),
+		groupName:          groupName,
+		ports:              ports,
+		wakeCh:             make(chan struct{}, 1),
+		configuredEstimate: configuredEstimate,
 	}
 }
 
@@ -48,8 +58,12 @@ func (sp *startupStatusPage) Start() {
 drained:
 	sp.servers = make(map[uint16]*http.Server)
 	sp.listeners = make(map[uint16]net.Listener)
+	sp.wakeRequestedAt = time.Time{}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sp.MarkWakeRequested()
+		remaining, estimated := sp.startupTiming()
+
 		select {
 		case sp.wakeCh <- struct{}{}:
 		default:
@@ -59,7 +73,7 @@ drained:
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Retry-After", "5")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = fmt.Fprintf(w, "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Container wird gestartet</title></head><body style=\"font-family: sans-serif; margin: 2rem; line-height: 1.5;\"><h1>Container startet gerade</h1><p>Die Anwendung in Gruppe <strong>%s</strong> wird gerade hochgefahren und ist in Kuerze verfuegbar.</p><p>Bitte aktualisiere die Seite in ein paar Sekunden erneut.</p></body></html>", sp.groupName)
+		_, _ = fmt.Fprintf(w, "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Container wird gestartet</title></head><body style=\"font-family: sans-serif; margin: 2rem; line-height: 1.5;\"><h1>Container startet gerade</h1><p>Die Anwendung in Gruppe <strong>%s</strong> wird gerade hochgefahren und ist in Kuerze verfuegbar.</p><p>Geschaetzte Startdauer: <strong>%d Sekunden</strong></p><p>Voraussichtlich verbleibend: <strong>%d Sekunden</strong></p><p>Bitte aktualisiere die Seite in ein paar Sekunden erneut.</p></body></html>", sp.groupName, estimated, remaining)
 	})
 
 	startedListener := 0
@@ -131,4 +145,60 @@ func (sp *startupStatusPage) ConsumeStartSignal() bool {
 	default:
 		return false
 	}
+}
+
+func (sp *startupStatusPage) MarkWakeRequested() {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if sp.wakeRequestedAt.IsZero() {
+		sp.wakeRequestedAt = time.Now()
+	}
+}
+
+func (sp *startupStatusPage) RecordStartupDuration(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if sp.observedEstimate == 0 {
+		sp.observedEstimate = d
+	} else {
+		// Smooth startup estimates so one slow start does not dominate future ETAs.
+		sp.observedEstimate = (sp.observedEstimate*3 + d) / 4
+	}
+	sp.wakeRequestedAt = time.Time{}
+}
+
+func (sp *startupStatusPage) startupTiming() (remainingSeconds int, estimatedSeconds int) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	estimate := sp.configuredEstimate
+	if sp.observedEstimate > 0 {
+		estimate = sp.observedEstimate
+	}
+
+	remaining := estimate
+	if !sp.wakeRequestedAt.IsZero() {
+		elapsed := time.Since(sp.wakeRequestedAt)
+		remaining = estimate - elapsed
+		if remaining < 0 {
+			remaining = 0
+		}
+	}
+
+	estimatedSeconds = int(math.Ceil(estimate.Seconds()))
+	remainingSeconds = int(math.Ceil(remaining.Seconds()))
+	if estimatedSeconds < 1 {
+		estimatedSeconds = 1
+	}
+	if remainingSeconds < 0 {
+		remainingSeconds = 0
+	}
+
+	return remainingSeconds, estimatedSeconds
 }

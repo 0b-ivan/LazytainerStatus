@@ -196,6 +196,17 @@ func configureFromLabels() map[string]LazyGroup {
 				debugLogger.Println("Using default statusPage of false because " + prefix + groupName + ".statusPage was not set")
 			}
 
+			// configure startupEstimate
+			startupEstimate := uint16(30)
+			labelValueAsString, exists = labels[prefix+groupName+".startupEstimate"]
+			if exists {
+				val, err := strconv.Atoi(labelValueAsString)
+				check(err)
+				startupEstimate = uint16(val)
+			} else {
+				debugLogger.Println("Using default startupEstimate of 30 because " + prefix + groupName + ".startupEstimate was not set")
+			}
+
 			groups[groupName] = LazyGroup{
 				groupName:           groupName,
 				inactiveTimeout:     inactiveTimeout,
@@ -206,6 +217,7 @@ func configureFromLabels() map[string]LazyGroup {
 				ports:               ports,
 				sleepMethod:         sleepMethod,
 				statusPage:          statusPage,
+				startupEstimate:     startupEstimate,
 			}
 		}
 	}

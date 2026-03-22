@@ -83,6 +83,7 @@ Group properties that can be changed include:
 | sleepMethod         | How to put the container to sleep. Can be `stop` or `pause`                                                                                                                                        | No       | `stop`  |
 | netInterface        | Network interface to listen on                                                                                                                                                                     | No       | `eth0`  |
 | statusPage          | If true, Lazytainer serves a temporary HTTP status page on the group's configured ports while the group is stopped and wake-up is in progress. Only useful for HTTP/TCP services and `sleepMethod=stop` | No       | false   |
+| startupEstimate     | Estimated startup time in seconds shown on the status page. Lazytainer also refines this value over time using observed startup durations.                                                     | No       | 30      |
 
 ### Additional Configuration
 

@@ -27,6 +27,7 @@ type LazyGroup struct {
 	ports               []uint16 // list of ports, which happens to also be a 16 bit range, how convenient!
 	sleepMethod         string   // whether to stop or pause the container
 	statusPage          bool     // expose a temporary status page while the group is stopped
+	startupEstimate     uint16   // estimated startup duration in seconds shown on the status page
 }
 
 var err error
@@ -38,8 +39,11 @@ func (lg LazyGroup) MainLoop() {
 
 	var startupPage *startupStatusPage
 	if lg.statusPage {
-		startupPage = newStartupStatusPage(lg.groupName, lg.ports)
+		startupPage = newStartupStatusPage(lg.groupName, lg.ports, time.Duration(lg.startupEstimate)*time.Second)
 	}
+
+	startupPending := false
+	startupRequestedAt := time.Time{}
 
 	inactiveSeconds := 0
 	// initialize a slice to keep track of recent network traffic
@@ -53,6 +57,13 @@ func (lg LazyGroup) MainLoop() {
 		}
 		// if the container is running, see if it needs to be stopped
 		if lg.isGroupOn() {
+			if startupPending {
+				startupPending = false
+				if startupPage != nil {
+					startupPage.RecordStartupDuration(time.Since(startupRequestedAt))
+				}
+			}
+
 			if startupPage != nil {
 				startupPage.Stop()
 			}
@@ -82,8 +93,13 @@ func (lg LazyGroup) MainLoop() {
 			if wakeRequested || rxHistory[0]+int(lg.minPacketThreshold) < rxHistory[len(rxHistory)-1] {
 				inactiveSeconds = 0
 				if startupPage != nil {
+					startupPage.MarkWakeRequested()
+				}
+				if startupPage != nil {
 					startupPage.Stop()
 				}
+				startupPending = true
+				startupRequestedAt = time.Now()
 				lg.startContainers()
 			} else {
 				debugLogger.Println(rxHistory[len(rxHistory)-1], "received out of", rxHistory[0]+int(lg.minPacketThreshold), "packets needed to restart container")
