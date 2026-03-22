@@ -632,6 +632,8 @@ drained:
 		lastStartupSummary := sp.lastStartupSummary()
 		visitorInfo := visitorInfoText(sp.groupName)
 		inlineCSS := sp.getStatusCSS()
+		elapsedSecs := sp.elapsedSeconds()
+		quizVisibleOnLoad := sp.quizEnabled && elapsedSecs >= 40
 		quizSectionStyle := ""
 		quizInfoText := "Der Container waermt sich gerade auf. Solange kannst du mit Gaming-Zitaten ein paar Punkte farmen."
 		countdownLabel := "Verbleibend bis zum Reload"
@@ -639,6 +641,9 @@ drained:
 		if !sp.quizEnabled {
 			quizSectionStyle = "display:none;"
 			quizInfoText = "Das Minigame ist aktuell deaktiviert. Der Container startet trotzdem ganz normal."
+		} else if !quizVisibleOnLoad {
+			quizSectionStyle = "display:none;"
+			quizInfoText = "Minigame wird nach 40 Sekunden Wartezeit automatisch freigeschaltet."
 		}
 		if sp.debugMode {
 			countdownLabel = "Debug-Modus aktiv: kein automatischer Reload"
@@ -725,6 +730,8 @@ drained:
 	<script>
 		const MINIGAME_ENABLED = %t;
 		const DEBUG_MODE = %t;
+		const ELAPSED_SECONDS = %d;
+		const QUIZ_START_THRESHOLD = 40;
 		const QUIZ_API_BASE = '`+statusAPIBaseRoute+`';
 		const SESSION_ID = '%s';
 		let currentQuestion = null;
@@ -861,9 +868,17 @@ drained:
 			loadQuiz();
 		}
 
+		function showQuizSection() {
+			const quizSection = document.getElementById('quiz-section');
+			if (quizSection) {
+				quizSection.style.display = '';
+			}
+		}
+
 		// Countdown timer
 		let remaining = Math.max(0, Number(%d));
 		let reloading = false;
+		const initialRemaining = remaining;
 
 		const remainingEl = document.getElementById("remaining");
 
@@ -894,13 +909,24 @@ drained:
 			}, 1000);
 		}
 
-		// Load quiz on page load only when enabled
+		// Load quiz on page load only when enabled and 40+ seconds have elapsed
 		if (MINIGAME_ENABLED) {
-			loadQuiz();
+			if (ELAPSED_SECONDS >= QUIZ_START_THRESHOLD) {
+				showQuizSection();
+				// Already waited 40+ seconds, load quiz immediately
+				loadQuiz();
+			} else {
+				// Schedule quiz load after the threshold is reached
+				const msUntilThreshold = (QUIZ_START_THRESHOLD - ELAPSED_SECONDS) * 1000;
+				setTimeout(function() {
+					showQuizSection();
+					loadQuiz();
+				}, msUntilThreshold);
+			}
 		}
 	</script>
 </body>
-</html>`, inlineCSS, debugInfoText, quizInfoText, visitorInfo, sp.groupName, lastStartupSummary, remaining, countdownLabel, quizSectionStyle, sp.quizEnabled, sp.debugMode, sessionID, remaining)
+</html>`, inlineCSS, debugInfoText, quizInfoText, visitorInfo, sp.groupName, lastStartupSummary, remaining, countdownLabel, quizSectionStyle, sp.quizEnabled, sp.debugMode, elapsedSecs, sessionID, remaining)
 	})
 
 	// Quiz API: Get next question
@@ -1168,4 +1194,21 @@ func (sp *startupStatusPage) startupTiming() int {
 	}
 
 	return remainingSeconds
+}
+
+// Returns elapsed seconds since wake was requested
+func (sp *startupStatusPage) elapsedSeconds() int {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	if sp.wakeRequestedAt.IsZero() {
+		return 0
+	}
+
+	elapsed := time.Since(sp.wakeRequestedAt)
+	elapsedSec := int(elapsed.Seconds())
+	if elapsedSec < 0 {
+		elapsedSec = 0
+	}
+	return elapsedSec
 }
